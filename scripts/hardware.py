@@ -63,6 +63,7 @@ def mac_hardware(profile, physical_devices):
             if label and label not in candidates:
                 candidates.append(label)
     hardware["enclosure"]["bridge_candidates"] = candidates
+    hardware["controller"]["candidates"] = candidates
     return hardware
 
 
@@ -71,10 +72,13 @@ def empty_hardware():
         computer=dict(model=None, source="unavailable"),
         drive=dict(model=None, source="unavailable"),
         enclosure=dict(model=None, source="unavailable", bridge_candidates=[]),
+        controller=dict(model=None, source="unavailable", candidates=[]),
     )
 
 
-def collect_hardware(target, computer=None, drive=None, enclosure=None):
+def collect_hardware(
+    target, computer=None, drive=None, enclosure=None, controller=None
+):
     hardware = empty_hardware()
     try:
         if platform.system() == "Darwin":
@@ -122,6 +126,7 @@ def collect_hardware(target, computer=None, drive=None, enclosure=None):
         ("computer", computer),
         ("drive", drive),
         ("enclosure", enclosure),
+        ("controller", controller),
     ):
         if value is not None:
             if not value.strip():

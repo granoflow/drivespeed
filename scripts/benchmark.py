@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import platform
+import signal
 import subprocess
 import sys
 import time
@@ -14,6 +15,11 @@ from pathlib import Path
 
 from progress import Progress, language_default, messages
 from hardware import collect_hardware
+from reference_data import (
+    load_reference_data,
+    load_reference_cache,
+    cache_reference_data,
+)
 from system_io import (
     BenchError,
     DeviceLock,
@@ -25,6 +31,8 @@ from system_io import (
     stop_process,
 )
 from workloads import (
+    GIB,
+    MIB,
     bandwidth_series,
     byte_size,
     fio_arguments,
@@ -32,6 +40,11 @@ from workloads import (
     metrics,
     plan,
     sustained_summary,
+    cache_assessment,
+    cache_write_plan,
+    diagnostic_plan,
+    add_recovery,
+    job_label,
 )
 
 
@@ -47,7 +60,7 @@ def parser():
         default="diskbench-results",
         help="New output directory, preferably on another volume",
     )
-    p.add_argument("--profile", choices=["quick", "full"], default="full")
+    p.add_argument("--profile", choices=["quick", "full", "cache", "mapping", "integrity"], default="full")
     p.add_argument(
         "--language",
         default=language_default(),
@@ -65,6 +78,14 @@ def parser():
     p.add_argument("--ui-messages", help="Complete translated progress language JSON")
     p.add_argument("--format", choices=["html", "pdf"], default="html")
     p.add_argument(
+        "--reference-file", help="Agent-researched, localized reference JSON; optional"
+    )
+    p.add_argument(
+        "--refresh-references",
+        action="store_true",
+        help="Ignore cached reference facts; agent must research again",
+    )
+    p.add_argument(
         "--computer-model",
         help="User-confirmed test computer model; otherwise auto-detect",
     )
@@ -75,6 +96,17 @@ def parser():
         "--enclosure-model",
         help="User-confirmed retail enclosure model; bridge IDs are not retail models",
     )
+    p.add_argument(
+        "--controller-model", help="User-confirmed enclosure controller model"
+    )
+    p.add_argument(
+        "--cache-estimate-file",
+        help="Agent-researched cache planning JSON; see references/cache-planning.md",
+    )
+    p.add_argument("--fill-free-space", action="store_true",
+                   help="Integrity profile only: use free space minus max(10 GiB, 5%% volume capacity)")
+    p.add_argument("--recovery-seconds", type=int,
+                   help="Cache profile only: idle this long, then run an additional bounded 8 GiB write")
     p.add_argument("--file-size", type=byte_size)
     p.add_argument("--write-budget", type=byte_size)
     p.add_argument("--seconds", type=int, help="Maximum seconds per ordinary test")
@@ -139,7 +171,17 @@ def run_case(fio, job, config, engine, output, work, target, progress):
         temperatures=[],
         reason=None,
     )
+    if job.get("idle_seconds"):
+        idle_start = time.monotonic()
+        while time.monotonic() - idle_start < job["idle_seconds"]:
+            remaining = job["idle_seconds"] - (time.monotonic() - idle_start)
+            check_target(target, config["reserve_bytes"])
+            progress.emit(job["name"], percent=0, remaining=remaining + job["runtime"])
+            time.sleep(max(0, min(1, remaining)))
     start = time.monotonic()
+    cache_points = []
+    last_write_bytes, last_elapsed = 0, 0.0
+    cache_stop_requested = None
     last_sensor = start - 5
     identity = (work.stat().st_dev, work.stat().st_ino)
     file_identity = (
@@ -183,6 +225,41 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                     snapshot = metrics(objects[-1])
                     done = sum(snapshot[d]["bytes"] for d in ("read", "write"))
                     elapsed = (snapshot.get("runtime_ms") or 0) / 1000
+                    if job.get("cache_test"):
+                        for record in objects:
+                            observed = metrics(record)
+                            observed_seconds = (observed.get("runtime_ms") or 0) / 1000
+                            if observed_seconds <= last_elapsed:
+                                continue
+                            written = observed["write"]["bytes"]
+                            if written >= last_write_bytes:
+                                cache_points.append(
+                                    dict(
+                                        seconds=observed_seconds,
+                                        mb_s=(written - last_write_bytes)
+                                        / (observed_seconds - last_elapsed)
+                                        / 1_000_000,
+                                        direction="write",
+                                    )
+                                )
+                            last_elapsed, last_write_bytes = observed_seconds, written
+                        assessment = cache_assessment(cache_points)
+                        if (
+                            assessment["status"] == "observed_drop_stable"
+                            and cache_stop_requested is None
+                        ):
+                            # SIGINT lets fio flush its final snapshot and bandwidth log.
+                            cache_stop_requested = time.monotonic()
+                            os.killpg(proc.pid, signal.SIGINT)
+                    if (
+                        cache_stop_requested is not None
+                        and time.monotonic() - cache_stop_requested > 30
+                    ):
+                        raise BenchError(
+                            "run_failed",
+                            "fio did not finish after the cache observation",
+                            5,
+                        )
                     fraction = max(done / job["io_bytes"], elapsed / job["runtime"])
                     rate = done / elapsed if elapsed > 0 else None
                     eta = (
@@ -193,17 +270,29 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                         if rate
                         else None
                     )
+                    # Cache exhaustion time is unknown; budget consumption is not completion.
                     progress.emit(
-                        job["name"], percent=min(99, fraction * 100), remaining=eta
+                        job["name"],
+                        percent=None
+                        if job.get("cache_test")
+                        else min(99, fraction * 100),
+                        remaining=None if job.get("cache_test") else eta,
                     )
                 else:
                     progress.emit(job["name"])
                 time.sleep(1)
-            if proc.returncode:
+            if proc.returncode and not (
+                cache_stop_requested is not None
+                and proc.returncode in (-signal.SIGINT, 128 + signal.SIGINT)
+            ):
                 raise BenchError(
                     "run_failed", f"fio exit {proc.returncode}; {raw.name}", 5
                 )
-            objects = json_objects(raw.read_text(encoding="utf-8"), strict=True)
+            objects = json_objects(
+                raw.read_text(encoding="utf-8"),
+                strict=True,
+                allow_signal_notice=cache_stop_requested is not None,
+            )
             if not objects:
                 raise ValueError("fio produced no JSON measurements")
             if objects[-1]["jobs"][0].get("eta") != 0:
@@ -212,13 +301,21 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             completed = sum(case["metrics"][d]["bytes"] for d in ("read", "write"))
             if not completed:
                 raise ValueError("fio completed zero I/O")
-            if job["name"] == "prepare" and completed < config["file_bytes"]:
+            if (job["name"] == "prepare" or job.get("require_complete")) and completed < job["io_bytes"]:
                 raise ValueError(
-                    "Initialization did not write the full file; refusing read benchmarks"
+                    "Incomplete diagnostic coverage; refusing to claim a complete write/read verification"
                 )
             if completed > job["io_bytes"] + job["bs"] * job["qd"]:
                 raise ValueError("Reported I/O exceeds the planned bound")
             case["status"] = "completed"
+            if job.get("cache_test"):
+                case["stop_reason"] = (
+                    "post_drop_stable"
+                    if cache_stop_requested is not None
+                    else "byte_limit"
+                    if completed >= job["io_bytes"]
+                    else "time_limit"
+                )
         except KeyboardInterrupt:
             case.update(status="cancelled", reason="cancelled")
             raise
@@ -252,8 +349,100 @@ def execute(args, text, report_text):
         args.write_budget,
         args.seconds,
         args.sustained_seconds,
+    ) if args.profile in ("quick", "full", "cache") else None
+    reference_data = (
+        load_reference_data(args.reference_file) if args.reference_file else {}
     )
     target = target_info(args.target)
+    if args.fill_free_space and (args.profile != "integrity" or args.file_size is not None):
+        raise ValueError("--fill-free-space requires integrity and cannot be combined with --file-size")
+    if args.recovery_seconds is not None and args.profile != "cache":
+        raise ValueError("--recovery-seconds requires --profile cache")
+    if args.profile in ("mapping", "integrity"):
+        config = diagnostic_plan(args.profile, target, args.file_size, args.write_budget,
+                                 args.seconds if args.seconds is not None else 30,
+                                 args.sustained_seconds if args.sustained_seconds is not None else 1800,
+                                 args.fill_free_space)
+
+    current_hardware = collect_hardware(
+        target,
+        computer=args.computer_model,
+        drive=args.drive_model,
+        enclosure=args.enclosure_model,
+        controller=args.controller_model,
+    )
+    cached, reference_cache = load_reference_cache(
+        current_hardware, args.refresh_references, language=args.language
+    )
+    if args.reference_file:
+        reference_data["language"] = args.language
+        reference_cache = dict(
+            status="provided",
+            checked_at=reference_data.get("checked_at"),
+            from_cache=False,
+        )
+    elif cached:
+        reference_data = cached
+    if args.cache_estimate_file and args.profile != "cache":
+        raise ValueError("--cache-estimate-file is only used with --profile cache")
+    if args.profile == "cache":
+        estimate = (
+            json.loads(Path(args.cache_estimate_file).read_text(encoding="utf-8"))
+            if args.cache_estimate_file
+            else None
+        )
+        cache_planning = cache_write_plan(estimate)
+        if estimate:
+            current = current_hardware["drive"].get("model")
+            normalize = lambda value: "".join(
+                c.lower() for c in (value or "") if c.isalnum()
+            )
+            if not current or normalize(current) != normalize(estimate["drive_model"]):
+                raise ValueError(
+                    "Cache estimate does not match the currently detected drive model; research this drive or omit the estimate"
+                )
+        minimum_reserve = max(10 * GIB, int(target.get("total_bytes", 0) * 0.1))
+        available = max(0, target["free_bytes"] - minimum_reserve)
+        requested = (
+            args.file_size
+            if args.file_size is not None
+            else cache_planning["requested_bytes"]
+        )
+        size = (
+            requested
+            if args.file_size is not None
+            else min(requested, available, available / 1.25)
+        )
+        if args.write_budget is not None:
+            size = min(size, args.write_budget)
+        size = int(size // MIB) * MIB
+        config = plan(
+            "cache",
+            file_bytes=size,
+            write_budget=size,
+            sustained=args.sustained_seconds,
+        )
+        config["reserve_bytes"] = max(config["reserve_bytes"], minimum_reserve)
+        config["cache_planning"] = dict(
+            cache_planning,
+            effective_bytes=size,
+            limited_by_space_or_budget=size < requested,
+        )
+    if args.recovery_seconds is not None:
+        # An explicit user write cap covers both sustained and recovery writes.
+        extra = min(config["file_bytes"], 8 * GIB)
+        if args.write_budget is not None:
+            sustained_job = config["jobs"][0]
+            sustained_job["io_bytes"] = (args.write_budget - extra) // MIB * MIB
+            sustained_job["io_bytes"] = min(sustained_job["io_bytes"], config["file_bytes"])
+            if sustained_job["io_bytes"] < MIB:
+                raise ValueError("Write budget must cover sustained writing and recovery")
+            config["max_write_bytes"] = sustained_job["io_bytes"]
+            config["write_budget"] = sustained_job["io_bytes"]
+        add_recovery(config, args.recovery_seconds)
+    text = dict(text)
+    for job in config["jobs"]:
+        text[job["name"]] = job_label(job, text)
     if target["free_bytes"] < config["file_bytes"] + config["reserve_bytes"]:
         raise BenchError(
             "space_failed", str(config["file_bytes"] + config["reserve_bytes"])
@@ -263,6 +452,8 @@ def execute(args, text, report_text):
             json.dumps(
                 dict(
                     target=target,
+                    hardware=current_hardware,
+                    reference_cache=reference_cache,
                     plan=config,
                     fio=find_fio(),
                     language=args.language,
@@ -296,6 +487,7 @@ def execute(args, text, report_text):
         outcome="failed",
         report={},
         notes=[],
+        references=reference_data,
     )
     labels = (
         ["inspect", "dependency"]
@@ -304,12 +496,15 @@ def execute(args, text, report_text):
     )
     progress = Progress(labels, text, output / "progress.jsonl")
     progress.emit("inspect", force=True)
-    result["hardware"] = collect_hardware(
-        target,
-        computer=args.computer_model,
-        drive=args.drive_model,
-        enclosure=args.enclosure_model,
-    )
+    result["hardware"] = current_hardware
+    if args.reference_file:
+        try:
+            reference_cache = cache_reference_data(
+                reference_data, current_hardware, language=args.language
+            )
+        except OSError:
+            reference_cache = dict(status="write_failed", from_cache=False)
+    result["reference_cache"] = reference_cache
     progress.emit("inspect", "completed", 100, force=True)
     work = None
     error_code = 0
@@ -426,6 +621,18 @@ def execute(args, text, report_text):
                 (c for c in result["cases"] if c["name"] == "sustained"), {}
             )
             result["sustained_summary"] = sustained_summary(sustained.get("series", []))
+            result["cache_assessment"] = cache_assessment(sustained.get("series", []))
+            result["cache_assessment"]["stop_reason"] = sustained.get(
+                "stop_reason", "bounded_test"
+            )
+            if (
+                args.profile == "cache"
+                and result["cache_assessment"]["status"] != "observed_drop_stable"
+            ):
+                if result["outcome"] == "complete":
+                    result["outcome"] = "partial"
+                    error_code = error_code or 6
+                result["notes"].append("cache_incomplete")
             save(output / "results.json", result)
     from report import render_report
 

@@ -1,4 +1,6 @@
 {
-  "name": "external-disk-benchmark",
-  "repository_url": "https://github.com/granoflow/external-disk-benchmark"
+  "name": "DriveSpeed",
+  "repository_url": "https://github.com/granoflow/drivespeed",
+  "website_url": "https://anz.tv",
+  "translation_url": "https://translate.anz.tv"
 }

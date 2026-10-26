@@ -1,4 +1,4 @@
 interface:
-  display_name: "移动硬盘测速"
-  short_description: "调用 fio 测速，展示本地化进度并生成 HTML/PDF 报告"
-  default_prompt: "Use $external-disk-benchmark to test the selected external drive and report in my language."
+  display_name: "移动硬盘测速（DriveSpeed）"
+  short_description: "你的移动硬盘几斤几两？现在就来测一下吧。"
+  default_prompt: "Use $drivespeed to test the selected external drive and report in my language."

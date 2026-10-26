@@ -18,7 +18,7 @@ from pathlib import Path
 VERSION = "3.43"
 SOURCE_SHA = "efa49b3f36eda9adf29294f27a87d7e457747d676cd0f73996d6365357832cfe"
 WINDOWS_SHA = "8299e6e6fbc024d3b74aa1ce62fb94ef6960b45629fbfa678b720834b6eb34aa"
-CACHE = Path.home() / ".cache" / "external-disk-benchmark"
+CACHE = Path.home() / ".cache" / "drivespeed"
 
 
 class BenchError(Exception):
@@ -364,6 +364,7 @@ class DeviceLock:
     def __init__(self, target):
         self.paths = []
         self.devices = target["physical_devices"]
+        # Share locks with older published runners to prevent concurrent disk tests.
         self.root = Path(tempfile.gettempdir()) / "external-disk-benchmark-locks"
 
     def __enter__(self):

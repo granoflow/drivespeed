@@ -2,3 +2,6 @@ __pycache__/
 *.py[cod]
 .DS_Store
 diskbench-results/
+
+# Local reports and development evidence; never ship user device data.
+docs-temp/

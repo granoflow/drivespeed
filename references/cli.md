@@ -15,7 +15,7 @@ file-size/write-budget 接受正整数字节或 KiB/MiB/GiB/TiB，4 KiB 对齐�
 - Windows：固定上游 x64 MSI 和发布 SHA256 校验后通过 msiexec 安装；当前无 Windows 设备保护，因此 benchmark 入口在安装之前就会拒绝测速。此路径仅为将来平台实现保留，不声明已验收。
 - 受网络、管理员权限或缺编译工具影响时，代理结合原始安装日志说明准确原因，不能绕过宿主批准或静默安装整套包管理器。源码下载校验失败的文件保留诊断，不执行。
 
-下载/安装会产生缓存，安装日志保存在本次结果目录；现有 fio 不触发联网。缓存目录为用户 `.cache/external-disk-benchmark`，不是 skill 仓库私有路径。
+下载/安装会产生缓存，安装日志保存在本次结果目录；现有 fio 不触发联网。缓存目录为用户 `.cache/drivespeed`，不是 skill 仓库私有路径。
 
 ## 输出和失败
 
@@ -32,3 +32,29 @@ results.json 包含 schema_version=1、target、environment、plan、cases、ser
 每次实际测速重新采集 `hardware.computer / drive / enclosure`，字段为 model/source；enclosure 另有未确认关联的 bridge_candidates。缺失字段保留 null，不复用历史报告。`--computer-model`、`--drive-model`、`--enclosure-model` 可提供用户已确认的型号，source=user。system_profiler 只按 target.physical_devices 中的 BSD 标识选择硬盘，Linux 以 lsblk 匹配物理盘；原始硬件清单和序列号不存入结果。
 
 `assets/project.json` 拥有报告的仓库 URL。报告包含翻译后的简介及显式 HTTPS 超链接；离线打开不访问该链接，用户点击时才联网。旧结果没有 hardware 时报告标为未确认，不把当前机器补录成过去的测试机器。
+
+
+## 读取 HTML/PDF 报告
+
+HTML 先显示关键速度、硬件及持续写入表现，环境和方法使用可展开区域；打印前自动展开，打印后恢复原来的展开状态。正常完成时省略重复的状态、空原因列；存在未完成项或原因时恢复对应列。数值、失败提示和方法限制仍保留，PDF 包含完整参数。
+
+AI Agent 优先读取 `results.json` 的原始数值。读取 HTML 时可用 `#results` / `#measurements` 定位表格，`data-metric` 定位摘要与持续写入指标，`dt` / `dd` 对应标签和值；折叠区域不等于缺失数据。输出 JSON 和测速数据格式不因布局变更而改变。
+
+
+缓存专项：`--profile cache`；先用 `--dry-run` 展示写入/空间上限。满足降速后稳定窗口会提前停止；预算或时限用尽仍无缓存后数据时返回部分结果和退出码 6。可用 `--file-size 512GiB --write-budget 512GiB --sustained-seconds 1800` 自定硬上限，单次顺序写入量不会超过文件空间。硬盘盒商品型号用 `--enclosure-model`，主控型号用 `--controller-model`，都只填用户已确认的真实型号。
+
+
+缓存规划遵循“执行模型网络搜索 → 模型已有知识 → 1 TiB 兜底”，详见 [缓存规划](cache-planning.md)。有来源/知识估计时通过 `--cache-estimate-file` 输入，再按估计缓存量加稳定采样量与余量制定文件；1 TiB 仅是无可用估计时的兜底，不是硬盘缓存参数。所有参考值与实测值分别记录。
+
+
+参考数据（可选）：benchmark.py 和 report.py 均支持 `--reference-file /path/to/references.json`。文件由 AI 根据实际打开的官网或可信评测整理，使用报告语言；JSON 校验和当前型号匹配不代表脚本独立核实了网页事实。缺少参考时照常生成报告。详见 [参考数据研究](reference-research.md)。
+
+
+网络参考本地缓存位于用户 `.cache/drivespeed/references/<硬件组合>/<语言>.json`（或 XDG_CACHE_HOME）。默认 30 天复核，读取/翻译不更改原查阅日期。`--dry-run` 返回本次硬件、reference_cache 状态及其他已缓存语言，不写缓存；有新参考文件的正式执行/报告生成会保存公开参数。`--refresh-references` 绕过缓存，由 AI 重新核查后提供文件，Python 不暗中联网。过期离线缓存可展示并标为待更新；测量结果不进入此缓存。
+
+
+面向普通读者的“日常使用解读”从本次 results.json 动态计算：10GB 文件耗时仅为吞吐换算，不是实测复制时间；QD1/QD16 对照只展示同一设备内、块大小匹配且已完成的测试，不称为软件提速。缺项省略对应换算，不能复用开发者机器的解读或补造分数。HTML 的完整测试表和指标说明默认折叠，PDF 打印会展开并保留所有数值。
+
+## 可选诊断入口
+
+`--profile mapping`、`--profile integrity`、`--fill-free-space` 与 `--recovery-seconds` 的流程、预算和结果解释见 [专项测试](diagnostics.md)。现有 quick/full 默认不变。
