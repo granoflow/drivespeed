@@ -51,3 +51,5 @@ python3 -m unittest discover -s tests -v
 原始 fio 不打包进本项目，通过独立进程运行。项目代码使用 MIT；fio 使用 GPL-2.0-only，见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。当前目录可直接作为未来独立仓库根，不含父仓专用配置或 Git submodule。
 
 项目地址：[granoflow/external-disk-benchmark](https://github.com/granoflow/external-disk-benchmark)。HTML 和 PDF 均保留可点击项目链接及一句话介绍。
+
+可选的 GitHub Actions 模板在 [references/ci-workflow.yml](references/ci-workflow.yml)，当前未启用。拥有 workflow 写入权限时可放入 `.github/workflows/tests.yml`；模板只跑隔离测试，不安装 fio 或执行真实硬盘负载。
