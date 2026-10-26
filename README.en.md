@@ -71,3 +71,7 @@ python3 -m unittest discover -s tests -v
 Current skill metadata version: **0.1.0**. Public source: [granoflow/drivespeed](https://github.com/granoflow/drivespeed). Local reports and device evidence under `docs-temp/` are excluded from Git and distribution. Documentation and implementation details live in `references/` and `scripts/`.
 
 Project code: [MIT](LICENSE). fio is a separate GPL-2.0-only program and is not bundled; see [third-party notices](THIRD_PARTY_NOTICES.md).
+
+### Installation verification
+
+On 2026-10-26, Skills CLI 1.7.4 installed the public GitHub package in an isolated project for Codex, Claude Code and Cursor. Installed scripts, references and assets matched the source byte for byte; both CLI help commands and all 69 tests passed from the installed copy. This verifies distribution integrity, not live drive testing in every agent or operating system.
