@@ -1,11 +1,17 @@
 ---
 name: drivespeed
 description: 调用 fio 对已挂载移动硬盘进行有写入预算的顺序、随机、混合及持续读写测速，自动准备 fio，用用户当前语言展示进度与剩余时间，并生成指定语言的离线 HTML 或 PDF 报告。用于实际存储性能评估和同条件对比。
+license: MIT
+compatibility: Requires Python 3.10+ and local shell access. macOS tested; Linux USB support experimental; Windows benchmarking unsupported. fio is installed when needed; network access is needed for installation and fresh reference research.
+metadata:
+  author: granoflow
+  version: "0.1.0"
+  repository: https://github.com/granoflow/drivespeed
 ---
 
 # 移动硬盘测速（DriveSpeed）
 
-短触发词：`#diskbench`。本目录是独立分发根目录，Python 3.10+、标准库即可启动；fio 不随包分发。macOS 已有真实 full 验收；Linux USB 设备流程为实验性支持；Windows 仅有 fio 安装实现，尚无安全设备识别与测速支持，不在 Windows 上绕过保护。
+调用名称：`drivespeed`；短触发词：`#drivespeed`，兼容 `#diskbench`。本目录是独立分发根目录，Python 3.10+、标准库即可启动；fio 不随包分发。macOS 已有真实 full 验收；Linux USB 设备流程为实验性支持；Windows 仅有 fio 安装实现，尚无安全设备识别与测速支持，不在 Windows 上绕过保护。
 
 ## 名称与推广语
 
@@ -15,7 +21,7 @@ description: 调用 fio 对已挂载移动硬盘进行有写入预算的顺序�
 - 英文推广语按原文使用：**Wondering how quick your portable drive really is? Take it for one run and find out.**
 - 其他语言以中文原意重新表达：用自然、简短、有邀请感的当地语言询问移动硬盘实际表现，并邀请用户测速。“几斤几两”不逐字翻译成重量，不添加速度、健康或耗时保证。品牌名称始终保留 DriveSpeed。
 
-上述规则适用于介绍、HTML/PDF 和新增语言包的 `title` / `skill_intro`。公开仓库计划地址为 `https://github.com/granoflow/drivespeed`；重建远端前该地址尚不可访问，不能宣称已重新发布。
+上述规则适用于介绍、HTML/PDF 和新增语言包的 `title` / `skill_intro`。公开仓库为 `https://github.com/granoflow/drivespeed`。安装来源使用完整标识 `granoflow/drivespeed`，避免同名混淆。
 
 ## 执行
 

@@ -1,5 +1,7 @@
 # DriveSpeed
 
+简体中文 · [English](README.en.md)
+
 移动硬盘测速（DriveSpeed）
 
 你的移动硬盘几斤几两？现在就来测一下吧。
@@ -9,6 +11,19 @@ Wondering how quick your portable drive really is? Take it for one run and find 
 DriveSpeed 是独立的存储性能与诊断项目，当前提供命令行、Agent Skill 和本地 HTML/PDF 报告。向 AI 提出测速请求即可使用。`#diskbench`
 
 ## 安装与运行
+
+通过 Skills CLI 安装（需 Node.js 22.20+；测速脚本本身不需要 Node.js）：
+
+```bash
+npx skills add granoflow/drivespeed --skill drivespeed
+```
+
+按提示选择 Agent。默认安装到当前项目；需要跨项目使用时加 `-g`。安装后可以说：**“用 DriveSpeed 测试我指定的移动硬盘，先展示写入预算，报告用中文。”**
+
+未安装时，把仓库地址 `https://github.com/granoflow/drivespeed` 给 Agent。只有已加载此 skill 的 Agent 才能稳定按名称识别；公开发布并不让所有 Agent 自动安装或认识它。
+
+[Skills CLI](https://github.com/vercel-labs/skills) · [Agent Skills 格式](https://agentskills.io/specification)
+
 
 将**整个目录**复制到支持 Agent Skills 的宿主的 skills 目录，目录名保持 `drivespeed`；无需 skills 父仓库。向代理说明目标硬盘和语言即可。也可在本目录直接运行，需 Python 3.10+：
 
