@@ -36,7 +36,8 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px soli
   .community-report .comparison-source,
   .community-report .comparison-group > .table-wrap,
   .community-report .comparison-interpretation,
-  .community-report .comparison-method { break-inside: avoid; }
+  .community-report .comparison-method,
+  .community-report .comparison-ending { break-inside: avoid; }
   .community-report .comparison-group > h2,
   .community-report .comparison-group > h2 + p { break-after: avoid; }
 }

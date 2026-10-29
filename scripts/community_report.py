@@ -119,7 +119,9 @@ def render_comparison(facts, result, output, language, report_text, requested_fo
     text = report_messages(language, message_file)
     local, output = facts["local"], Path(output)
     sections = []
-    for group in facts["groups"]:
+    # With no references, empty per-metric tables only duplicate report A.
+    # Keep the frozen facts intact and retain all examples for nonempty snapshots.
+    for group in facts["groups"] if facts["sample_count"] else ():
         case = local["cases"][group["case_index"]]
         rows = []
         for metric in group["metrics"]:
@@ -146,15 +148,16 @@ def render_comparison(facts, result, output, language, report_text, requested_fo
     css = (Path(__file__).resolve().parents[1]/"assets/report.css").read_text()
     direction = "rtl" if language.split("-")[0] == "ar" else "ltr"
     evaluation = render_evaluation(result,language)
+    no_sources = ('<p class="comparison-empty">'+esc(text['no_sources'])+'</p><p><a href="report.html">'+esc(text['back'])+'</a></p>') if not facts['sample_count'] else ''
     document = f'''<!doctype html><html lang="{esc(language)}" dir="{direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{esc(text['title'])}</title><style>{css}</style></head><body class="community-report"><main>
 <header><div><h1>{esc(text['title'])}</h1><p class="run-meta">{esc(local['hardware']['drive']['model'] or text['unknown'])} · <time>{esc(local['tested_on'])}</time> · {esc(report_text.get(result.get('outcome'),result.get('outcome','')))}</p></div><button type="button" onclick="window.print()">{esc(report_text['download'])}</button></header>
 {('<p class="notice">'+esc(report_text['sample'])+'</p>') if result.get('synthetic') else ''}
-<section>{summary_html(facts,text)}<p>{esc(text['unverified'])}</p><p>{esc(text['threshold'])}</p><p><a href="{esc(x_profile(local['attribution']['profile_url']))}" rel="noopener noreferrer">{esc(text['author'])} · X @{esc(local['attribution']['profile_url'].rsplit('/',1)[1])}</a></p></section>
+<section>{summary_html(facts,text)}<p>{esc(text['unverified'])}</p><p>{esc(text['threshold'])}</p>{no_sources}<p><a href="{esc(x_profile(local['attribution']['profile_url']))}" rel="noopener noreferrer">{esc(text['author'])} · X @{esc(local['attribution']['profile_url'].rsplit('/',1)[1])}</a></p></section>
 <section><h2>{esc(text['local_conditions'])}</h2><dl>{model_rows}{condition_rows}</dl></section>{''.join(sections)}
 {evaluation or '<section class="comparison-interpretation"><h2>'+esc(text['interpretation'])+'</h2><p>'+esc(text['no_interpretation'])+'</p></section>'}
-<section class="comparison-method"><h2>{esc(text['method'])}</h2><p>{esc(text['formula'])}</p><p>{esc(text['confounders'])}</p><p>{esc(text['historical'])}</p><p>{esc(text['authenticity'])}</p></section>
+<div class="comparison-ending"><section class="comparison-method"><h2>{esc(text['method'])}</h2><p>{esc(text['formula'])}</p><p>{esc(text['confounders'])}</p><p>{esc(text['historical'])}</p><p>{esc(text['authenticity'])}</p></section>
 {agent_usage_html()}
-<footer><a href="report.html">{esc(text['back'])}</a> · DriveSpeed · <a href="https://anz.tv/" rel="noopener noreferrer">A New Zero</a></footer></main></body></html>'''
+<footer><a href="report.html">{esc(text['back'])}</a> · DriveSpeed · <a href="https://anz.tv/" rel="noopener noreferrer">A New Zero</a></footer></div></main></body></html>'''
     output.mkdir(parents=True, exist_ok=True)
     source, pdf_path = output/"comparison.html", output/"comparison.pdf"
     if source.is_symlink() or pdf_path.is_symlink():

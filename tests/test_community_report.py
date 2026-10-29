@@ -105,8 +105,55 @@ class ReportTests(unittest.TestCase):
                 source = Path(result["comparison_html"]).read_text()
                 self.assertNotIn("速率高100",source); self.assertIn("不足3份只列个例",source)
                 if count:
+                    self.assertIn('<section class="comparison-group">',source)
                     self.assertIn('class="comparison-example"',source)
                     self.assertIn("吞吐（MB/s）: 0.52",source)
+                else:
+                    self.assertNotIn('<section class="comparison-group">',source)
+                    self.assertIn('class="comparison-empty"',source)
+    def test_empty_snapshot_keeps_context_evaluation_and_sources_without_repeating_a(self):
+        facts = self.facts(0)
+        self.result['evaluation'] = {'run_id': self.result['run_id'], 'language': 'zh-CN', 'sections': [
+            {'kind': kind, 'title': title, 'paragraphs': ['缺少参考，仅依据本次结果判断。'],
+             'sources': [{'label': 'Fixture source', 'url': 'https://example.com/spec', 'checked_at': '2026-10-30'}]}
+            for kind,title in (('bottleneck','瓶颈判断'),('upgrades','升级建议'),('anomalies','异常检查'))]}
+        before_facts, before_result = copy.deepcopy(facts), copy.deepcopy(self.result)
+        with tempfile.TemporaryDirectory() as directory:
+            result = render_comparison(facts,self.result,directory,'zh-CN',messages('zh-CN'))
+            source = Path(result['comparison_html']).read_text()
+        self.assertIn('0份相似记录，0项读写测试可进行统计比较',source)
+        self.assertIn('本次测试条件',source)
+        self.assertIn('本项没有可用参考记录。',source)
+        self.assertIn('href="https://x.com/fixture_user"',source)
+        for value in (facts['sample_as_of'],facts['samples_fetched_at']):
+            self.assertIn('datetime="'+value+'"',source)
+        for kind in ('bottleneck','upgrades','anomalies'):
+            self.assertIn('id="evaluation-'+kind+'"',source)
+        self.assertIn('href="https://example.com/spec"',source)
+        self.assertIn('<div class="comparison-ending"><section class="comparison-method">',source)
+        self.assertIn('id="agent-usage"',source)
+        self.assertIn('href="report.html"',source)
+        self.assertNotIn('<section class="comparison-group">',source)
+        self.assertNotIn('<table class="comparison-metrics">',source)
+        self.assertNotIn('fetch(',source)
+        self.assertEqual(facts,before_facts)
+        self.assertEqual(self.result,before_result)
+    def test_nonempty_background_sample_retains_example_and_condition_differences(self):
+        value = receipt(self.local)
+        value['similar']['items'][0]['record']['submission']['storage']['capacity_bytes'] += 1048576
+        self.store.save_receipt(ID,value)
+        selected = build_comparison(self.store,self.result,ID)
+        facts = read_comparison(self.store,selected['comparison_id'])
+        self.assertEqual(facts['sample_count'],1)
+        self.assertTrue(all(metric['n'] == 0 for group in facts['groups'] for metric in group['metrics']))
+        with tempfile.TemporaryDirectory() as directory:
+            result = render_comparison(facts,self.result,directory,'zh-CN',messages('zh-CN'))
+            source = Path(result['comparison_html']).read_text()
+        self.assertIn('<section class="comparison-group">',source)
+        self.assertIn('class="comparison-example"',source)
+        self.assertIn('class="condition-differences"',source)
+        self.assertIn('只作背景：条件不同或缺失',source)
+        self.assertNotIn('class="comparison-empty"',source)
     def test_bad_source_or_missing_historical_context_fails_without_inventing_links(self):
         facts = self.facts(); facts["groups"][0]["references"][0]["conditions"]["x_profile_url"] = "javascript:alert(1)"
         with tempfile.TemporaryDirectory() as directory, self.assertRaises(CommunityError):
