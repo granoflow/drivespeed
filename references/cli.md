@@ -69,3 +69,11 @@ AI Agent 优先读取 `results.json` 的原始数值。读取 HTML 时可用 `#r
 
 
 新增 hardware.links 保存目标关联的最少链路元数据；旧结果缺失时报告显示未知，不补录当前机器。报告增加硬件链路/官方规格和五项五级评价；可选参考条件与分界见[硬件与五级评价](hardware-rating.md)。保留现有 JSON schema_version 和社区投稿结构；评级按原测量派生，不是官方鉴定。
+
+## 本地电脑显示与接口事实
+
+`report.py --show-computer-model` 仅控制本地 A/B HTML/PDF；缺省隐藏检测值、用户补充电脑型号及自动引用。显示选项不进入结果/投稿/摘要，同一结果可重新导出。原电脑事实仍可在本次投稿中内部保存，公共读取把 computer 固定为 null/unknown 并移除相关电脑依据；公共记录不是原上传字节副本。
+
+`benchmark.py --interface-name NAME` 接受用户已确认的 1..80 字符接口事实，写入 `hardware.access_interface`，保留系统 `target.protocol`；上传使用该 name 作为原始 `storage.connection`，因此属于新投稿内容和摘要的一部分，与显示选项不同。普通 user_input 不自动覆盖它。已有冻结报告不能沿旧 ID/同意改变接口名称；测量后补充只在用户确认的同 run 派生副本上进行，原始 fio 与旧 raw 保持。
+
+`python3 scripts/interface_types.py --name NAME --language en` 离线识别明确别名；`--catalog-stdin` 可从标准输入读取当前公开接口字典，结果只留在内存/标准输出。未知原名保留，不猜测；不因归一化启动测速或模型。

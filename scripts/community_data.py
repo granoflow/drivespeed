@@ -316,6 +316,16 @@ def project_result(result, profile_url, intro="", submission_id=None):
         _fail("cases")
     env, plan = result.get("environment", {}), result.get("plan", {})
     target = result.get("target", {})
+    access_interface = result["hardware"].get("access_interface")
+    connection = target.get("protocol")
+    if access_interface is not None:
+        from interface_types import confirmed_interface
+        try:
+            if not isinstance(access_interface,dict) or access_interface.get("source") != "user":
+                raise ValueError()
+            connection = confirmed_interface(access_interface.get("name"))["name"]
+        except ValueError:
+            _fail("hardware.access_interface")
     instant = _timestamp(result.get("created"), "created")
     if result.get("tool", {}).get("method_version") != "drivespeed-file-v1":
         _fail("tool.method_version", "missing_parameters")
@@ -388,7 +398,7 @@ def project_result(result, profile_url, intro="", submission_id=None):
         "measured_at_device": instant.isoformat().replace("+00:00", "Z"),
         "tool": {"version": result["tool"].get("version", "unknown"), "fio_version": env.get("fio", {}).get("version", "unknown"), "method_version": "drivespeed-file-v1"},
         "hardware": models, "storage": {"scope": _required(target, "scope", "target"), "capacity_bytes": capacity,
-            "connection": target.get("protocol"), "negotiated_bps": target.get("negotiated_bps"), "filesystem": target.get("filesystem"), "free_percent": free_percent},
+            "connection": connection, "negotiated_bps": target.get("negotiated_bps"), "filesystem": target.get("filesystem"), "free_percent": free_percent},
         "environment": {"os": family, "os_version": os_version, "architecture": env.get("architecture"), "ioengine": next(iter(engines)), "direct": True},
         "plan": {"profile": profile, "file_bytes": plan.get("file_bytes"), "write_budget_bytes": plan.get("write_budget"), "seconds": plan.get("seconds"), "sustained_seconds": plan.get("sustained")},
         "outcome": "completed" if result.get("outcome") == "complete" else result.get("outcome"), "cases": cases,

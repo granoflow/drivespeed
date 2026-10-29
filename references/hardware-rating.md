@@ -48,3 +48,9 @@
 新的可选 `assessment.capabilities` 携带准确型号的 read_mb_s/write_mb_s、basis=signal/rated、来源/日期/条件；不携带客户端星级。接口参考来自公开 links 和标准。网站按数值重算，与本地方法一致，来源字段和自算hash不是真实性认证。旧投稿未含能力参考仍可阅读，已有确认芯片可使用网站自己的公开官方目录；不把当前电脑的信息补进旧稿。
 
 所有投稿/样本能力值沿用 typed 子表保存与逐报告同意，用户正常不接触传输JSON，不新增JSON缓存。参考事实仍走既有公开资料缓存。
+
+## 接入接口名称
+
+离线规范名与明确别名由 assets/interface-types.json 提供；scripts/interface_types.py 不从实测速率或 USB-C/M.2 形态猜协议。接入接口与硬盘内部链路分开；用户确认的新名称经 hardware.access_interface 进入新投稿 storage.connection，原系统protocol保留。服务端分类 ID/revision 是派生解释，不改变原上传文字或其哈希；证据不足按用户原名显示，不进入具体接口筛选。
+
+公共电脑型号值和相关自动依据移除后，legacy assessment.references 不再公开；保留非电脑 links/specs/capabilities 供当前三维利用率计算。不会重算原 context 哈希冒历史依据。原始投稿/内部证据不因本地显示开关或公共投影而改变。

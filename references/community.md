@@ -116,3 +116,11 @@ Windows 社区分享/横评为实验性实现，尚无 Windows 实机验收。�
 新的公开 `assessment` v1 包含经过白名单投影的链路、规格和可比评分依据；不发送预先填写的等级。新增可选 capabilities 只传输硬件能力参考和出处；网站用完整顺序测试重算整份报告的三维星级，五项原始速度分别展示。星级代表利用率，历史参考不因展示日期改变而消失，缺规格先补查而不编造星级。硬件路径、序列号、原始清单和本地评价正文不进入此字段。上下文摘要只绑定公开条件，不证明来源真实。
 
 本地投稿和远端样本均以 SQLite typed 子表保存并重建，不缓存 JSON blob；旧快照没有该可选字段时保持原样。软件升级不把当前机器的信息补进旧报告，参考资料过期也不改变已冻结内容。网站查询时重新检查公开资格，详情保留参考日期与适用条件。详细规则见[硬件与五级评价](hardware-rating.md)。
+
+## 公共电脑隐私投影与接口分类
+
+原始投稿仍验证原 payload_json 字节与所有权摘要；本地电脑显示开关不参与它。公开 list/detail/similar 的 schema 1 外形保持，但 computer 固定 null/unknown，电脑规格和自动引用被移除，历史电脑 context 绑定的 assessment.references 清空。HTTP `DriveSpeed-Public-Projection: computer-hidden-v1` 标识投影；samples.expected_hash 只校验实际收到的投影，不冒充原上传摘要，旧比较快照仍独立校验。
+
+相似候选只按主控/硬盘匹配；公共电脑搜索、前缀和建议关闭。公开查询 `interface_type_id`、`controller_model`、`drive_model` 按 AND；型号建议可指定 `kind=controller|drive`。`GET /api/v1/interfaces` 返回已确认分类与明确别名，未知名称保留在原 storage.connection；无 active ID 时任何具体接口筛选都不命中，全部报告/直链仍可见。分类变化不改上传摘要、接收时间、配额或审核资格。
+
+只在认证接收后或受控维护审核未识别候选；公开读取不调模型。模型错误/缺配置/超预算/证据不足保持原名且不影响已接受回执。客户端严格允许 write_budget_bytes 与 unknown_write_budget_bytes 两个预算差异码，其它未知码仍拒绝。

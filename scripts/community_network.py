@@ -19,7 +19,8 @@ TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
 RESPONSE_LIMIT = 8 * 1024 * 1024
 REASONS = {None, "withdrawn", "account_restricted", "confirmed_false", "x_profile_changed", "pending_review" , "awaiting_review", "incomplete_report"}
 DIFFERENCES = {"scope", "capacity_bytes", "connection", "negotiated_bps", "filesystem", "free_percent", "os", "os_version",
-               "ioengine", "direct", "profile", "file_bytes", "seconds", "sustained_seconds", "workload", "unknown_condition"}
+               "ioengine", "direct", "profile", "file_bytes", "write_budget_bytes", "unknown_write_budget_bytes",
+               "seconds", "sustained_seconds", "workload", "unknown_condition"}
 REMOTE_CODES = {"not_found", "forbidden", "invalid_token", "missing_token", "content_conflict", "withdrawn", "consent_required",
                 "validation_failed", "rate_limited", "quota_exceeded", "flow_budget", "unavailable", "internal_error",
                 "auth_expired", "auth_incomplete", "auth_declined", "account_mismatch", "invalid_ticket", "intake_paused",

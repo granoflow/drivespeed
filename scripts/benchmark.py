@@ -101,6 +101,7 @@ def parser():
     p.add_argument(
         "--controller-model", help="User-confirmed enclosure controller model"
     )
+    p.add_argument("--interface-name", help="User-confirmed host access-interface name; preserves system protocol and physical-device safety checks")
     p.add_argument(
         "--cache-estimate-file",
         help="Agent-researched cache planning JSON; see references/cache-planning.md",
@@ -376,6 +377,7 @@ def execute(args, text, report_text):
         drive=args.drive_model,
         enclosure=args.enclosure_model,
         controller=args.controller_model,
+        access_interface=args.interface_name,
     )
     cached, reference_cache = load_reference_cache(
         current_hardware, args.refresh_references, language=args.language

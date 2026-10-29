@@ -1,0 +1,536 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "purpose": "Access-interface names and explicit aliases; never inferred from benchmark speed or connector shape",
+  "items": [
+    {
+      "id": "usb2-480mbps",
+      "family": "usb",
+      "protocol": "usb2",
+      "label": {
+        "zh": "USB 2.0",
+        "en": "USB 2.0"
+      },
+      "aliases": [
+        "USB 2.0",
+        "USB 480 Mbps"
+      ],
+      "nominal_bps": 480000000,
+      "evidence_urls": [
+        "https://www.usb.org/document-library/usb-20-specification"
+      ]
+    },
+    {
+      "id": "usb3-5gbps",
+      "family": "usb",
+      "protocol": "usb3",
+      "label": {
+        "zh": "USB 3.x 5 Gbps",
+        "en": "USB 3.x 5 Gbps"
+      },
+      "aliases": [
+        "USB 3.0",
+        "USB 3.1 Gen 1",
+        "USB 3.2 Gen 1",
+        "USB 3.2 Gen 1x1",
+        "USB 5 Gbps"
+      ],
+      "nominal_bps": 5000000000,
+      "evidence_urls": [
+        "https://usb.org/usb-32-0"
+      ]
+    },
+    {
+      "id": "usb3-10gbps",
+      "family": "usb",
+      "protocol": "usb3",
+      "label": {
+        "zh": "USB 3.x 10 Gbps",
+        "en": "USB 3.x 10 Gbps"
+      },
+      "aliases": [
+        "USB 3.1 Gen 2",
+        "USB 3.2 Gen 2",
+        "USB 3.2 Gen 2x1",
+        "USB 10 Gbps"
+      ],
+      "nominal_bps": 10000000000,
+      "evidence_urls": [
+        "https://usb.org/usb-32-0"
+      ]
+    },
+    {
+      "id": "usb3-20gbps",
+      "family": "usb",
+      "protocol": "usb3",
+      "label": {
+        "zh": "USB 3.x 20 Gbps",
+        "en": "USB 3.x 20 Gbps"
+      },
+      "aliases": [
+        "USB 3.2 Gen 2x2",
+        "USB 3.2 Gen 2×2"
+      ],
+      "nominal_bps": 20000000000,
+      "evidence_urls": [
+        "https://usb.org/usb-32-0"
+      ]
+    },
+    {
+      "id": "usb4-20gbps",
+      "family": "usb",
+      "protocol": "usb4",
+      "label": {
+        "zh": "USB4 20 Gbps",
+        "en": "USB4 20 Gbps"
+      },
+      "aliases": [
+        "USB4 20 Gbps",
+        "USB 4 20 Gbps"
+      ],
+      "nominal_bps": 20000000000,
+      "evidence_urls": [
+        "https://www.usb.org/usb4"
+      ]
+    },
+    {
+      "id": "usb4-40gbps",
+      "family": "usb",
+      "protocol": "usb4",
+      "label": {
+        "zh": "USB4 40 Gbps",
+        "en": "USB4 40 Gbps"
+      },
+      "aliases": [
+        "USB4 40 Gbps",
+        "USB 4 40 Gbps"
+      ],
+      "nominal_bps": 40000000000,
+      "evidence_urls": [
+        "https://www.usb.org/usb4"
+      ]
+    },
+    {
+      "id": "usb4-80gbps",
+      "family": "usb",
+      "protocol": "usb4",
+      "label": {
+        "zh": "USB4 80 Gbps",
+        "en": "USB4 80 Gbps"
+      },
+      "aliases": [
+        "USB4 80 Gbps",
+        "USB 4 80 Gbps"
+      ],
+      "nominal_bps": 80000000000,
+      "evidence_urls": [
+        "https://www.usb.org/usb4"
+      ]
+    },
+    {
+      "id": "sata-1-5gbps",
+      "family": "sata",
+      "protocol": "sata",
+      "label": {
+        "zh": "SATA 1.5 Gbps",
+        "en": "SATA 1.5 Gbps"
+      },
+      "aliases": [
+        "SATA 1.5 Gbit/s",
+        "SATA 1.5 Gb/s"
+      ],
+      "nominal_bps": 1500000000,
+      "evidence_urls": [
+        "https://sata-io.org/sites/default/files/documents/SATA-Revision-3.0-FAQ-FINAL.pdf"
+      ]
+    },
+    {
+      "id": "sata-3gbps",
+      "family": "sata",
+      "protocol": "sata",
+      "label": {
+        "zh": "SATA 3 Gbps",
+        "en": "SATA 3 Gbps"
+      },
+      "aliases": [
+        "SATA 3 Gbit/s",
+        "SATA 3 Gb/s"
+      ],
+      "nominal_bps": 3000000000,
+      "evidence_urls": [
+        "https://sata-io.org/sites/default/files/documents/SATA-Revision-3.0-FAQ-FINAL.pdf"
+      ]
+    },
+    {
+      "id": "sata-6gbps",
+      "family": "sata",
+      "protocol": "sata",
+      "label": {
+        "zh": "SATA 6 Gbps",
+        "en": "SATA 6 Gbps"
+      },
+      "aliases": [
+        "SATA 6 Gbit/s",
+        "SATA 6 Gb/s"
+      ],
+      "nominal_bps": 6000000000,
+      "evidence_urls": [
+        "https://sata-io.org/sites/default/files/documents/SATA-Revision-3.0-FAQ-FINAL.pdf"
+      ]
+    },
+    {
+      "id": "pata",
+      "family": "pata",
+      "protocol": "pata",
+      "label": {
+        "zh": "PATA (IDE)",
+        "en": "PATA (IDE)"
+      },
+      "aliases": [
+        "PATA",
+        "IDE",
+        "Parallel ATA"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://www.t13.org/"
+      ]
+    },
+    {
+      "id": "pcie",
+      "family": "pcie",
+      "protocol": "pcie",
+      "label": {
+        "zh": "PCIe",
+        "en": "PCIe"
+      },
+      "aliases": [
+        "PCI-Express",
+        "PCI Express",
+        "PCIe"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+      ]
+    },
+    {
+      "id": "pcie3-x1",
+      "family": "pcie",
+      "protocol": "pcie",
+      "label": {
+        "zh": "PCIe 3.0 ×1",
+        "en": "PCIe 3.0 ×1"
+      },
+      "aliases": [
+        "PCIe 3.0 x1",
+        "PCI Express 3.0 x1"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+      ]
+    },
+    {
+      "id": "pcie3-x2",
+      "family": "pcie",
+      "protocol": "pcie",
+      "label": {
+        "zh": "PCIe 3.0 ×2",
+        "en": "PCIe 3.0 ×2"
+      },
+      "aliases": [
+        "PCIe 3.0 x2",
+        "PCI Express 3.0 x2"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+      ]
+    },
+    {
+      "id": "pcie3-x4",
+      "family": "pcie",
+      "protocol": "pcie",
+      "label": {
+        "zh": "PCIe 3.0 ×4",
+        "en": "PCIe 3.0 ×4"
+      },
+      "aliases": [
+        "PCIe 3.0 x4",
+        "PCI Express 3.0 x4"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+      ]
+    },
+    {
+      "id": "pcie4-x1",
+      "family": "pcie",
+      "protocol": "pcie",
+      "label": {
+        "zh": "PCIe 4.0 ×1",
+        "en": "PCIe 4.0 ×1"
+      },
+      "aliases": [
+        "PCIe 4.0 x1",
+        "PCI Express 4.0 x1"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+      ]
+    },
+    {
+      "id": "pcie4-x2",
+      "family": "pcie",
+      "protocol": "pcie",
+      "label": {
+        "zh": "PCIe 4.0 ×2",
+        "en": "PCIe 4.0 ×2"
+      },
+      "aliases": [
+        "PCIe 4.0 x2",
+        "PCI Express 4.0 x2"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+      ]
+    },
+    {
+      "id": "pcie4-x4",
+      "family": "pcie",
+      "protocol": "pcie",
+      "label": {
+        "zh": "PCIe 4.0 ×4",
+        "en": "PCIe 4.0 ×4"
+      },
+      "aliases": [
+        "PCIe 4.0 x4",
+        "PCI Express 4.0 x4"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+      ]
+    },
+    {
+      "id": "pcie5-x1",
+      "family": "pcie",
+      "protocol": "pcie",
+      "label": {
+        "zh": "PCIe 5.0 ×1",
+        "en": "PCIe 5.0 ×1"
+      },
+      "aliases": [
+        "PCIe 5.0 x1",
+        "PCI Express 5.0 x1"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+      ]
+    },
+    {
+      "id": "pcie5-x2",
+      "family": "pcie",
+      "protocol": "pcie",
+      "label": {
+        "zh": "PCIe 5.0 ×2",
+        "en": "PCIe 5.0 ×2"
+      },
+      "aliases": [
+        "PCIe 5.0 x2",
+        "PCI Express 5.0 x2"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+      ]
+    },
+    {
+      "id": "pcie5-x4",
+      "family": "pcie",
+      "protocol": "pcie",
+      "label": {
+        "zh": "PCIe 5.0 ×4",
+        "en": "PCIe 5.0 ×4"
+      },
+      "aliases": [
+        "PCIe 5.0 x4",
+        "PCI Express 5.0 x4"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+      ]
+    },
+    {
+      "id": "thunderbolt1",
+      "family": "thunderbolt",
+      "protocol": "thunderbolt",
+      "label": {
+        "zh": "Thunderbolt 1",
+        "en": "Thunderbolt 1"
+      },
+      "aliases": [
+        "Thunderbolt 1",
+        "TB1"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://www.intel.com/content/www/us/en/architecture-and-technology/thunderbolt/overview.html"
+      ]
+    },
+    {
+      "id": "thunderbolt2",
+      "family": "thunderbolt",
+      "protocol": "thunderbolt",
+      "label": {
+        "zh": "Thunderbolt 2",
+        "en": "Thunderbolt 2"
+      },
+      "aliases": [
+        "Thunderbolt 2",
+        "TB2"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://www.intel.com/content/www/us/en/architecture-and-technology/thunderbolt/overview.html"
+      ]
+    },
+    {
+      "id": "thunderbolt3",
+      "family": "thunderbolt",
+      "protocol": "thunderbolt",
+      "label": {
+        "zh": "Thunderbolt 3",
+        "en": "Thunderbolt 3"
+      },
+      "aliases": [
+        "Thunderbolt 3",
+        "TB3"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://www.intel.com/content/www/us/en/architecture-and-technology/thunderbolt/overview.html"
+      ]
+    },
+    {
+      "id": "thunderbolt4",
+      "family": "thunderbolt",
+      "protocol": "thunderbolt",
+      "label": {
+        "zh": "Thunderbolt 4",
+        "en": "Thunderbolt 4"
+      },
+      "aliases": [
+        "Thunderbolt 4",
+        "TB4"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://www.intel.com/content/www/us/en/architecture-and-technology/thunderbolt/overview.html"
+      ]
+    },
+    {
+      "id": "thunderbolt5",
+      "family": "thunderbolt",
+      "protocol": "thunderbolt",
+      "label": {
+        "zh": "Thunderbolt 5",
+        "en": "Thunderbolt 5"
+      },
+      "aliases": [
+        "Thunderbolt 5",
+        "TB5"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://www.intel.com/content/www/us/en/architecture-and-technology/thunderbolt/overview.html"
+      ]
+    },
+    {
+      "id": "sas",
+      "family": "sas",
+      "protocol": "sas",
+      "label": {
+        "zh": "SAS",
+        "en": "SAS"
+      },
+      "aliases": [
+        "SAS"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://www.scsita.org/"
+      ]
+    },
+    {
+      "id": "scsi",
+      "family": "scsi",
+      "protocol": "scsi",
+      "label": {
+        "zh": "SCSI",
+        "en": "SCSI"
+      },
+      "aliases": [
+        "SCSI"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://www.scsita.org/"
+      ]
+    },
+    {
+      "id": "firewire",
+      "family": "firewire",
+      "protocol": "firewire",
+      "label": {
+        "zh": "FireWire",
+        "en": "FireWire"
+      },
+      "aliases": [
+        "FireWire"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://standards.ieee.org/ieee/1394/4377/"
+      ]
+    },
+    {
+      "id": "sd",
+      "family": "sd",
+      "protocol": "sd",
+      "label": {
+        "zh": "SD",
+        "en": "SD"
+      },
+      "aliases": [
+        "SD"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://www.sdcard.org/developers/sd-standard-overview/"
+      ]
+    },
+    {
+      "id": "mmc",
+      "family": "mmc",
+      "protocol": "mmc",
+      "label": {
+        "zh": "MMC",
+        "en": "MMC"
+      },
+      "aliases": [
+        "MMC"
+      ],
+      "nominal_bps": null,
+      "evidence_urls": [
+        "https://www.jedec.org/standards-documents/focus/flash"
+      ]
+    }
+  ]
+}

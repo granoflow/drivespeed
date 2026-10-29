@@ -75,6 +75,14 @@ HTML 和 PDF 均包含 assets/project.json 中的公开仓库链接和报告语�
 
 ## 分析与报告
 
+最终导出前询问“本地报告显示电脑型号吗？”。默认隐藏；用户明确选择显示时只给 `report.py` 加 `--show-computer-model`（Python接口为 `show_computer_model=True`）。同一选项控制 A/B HTML/PDF，本机电脑事实、用户补充的电脑型号及自动电脑引用都在范围内；远端参考的电脑型号始终不重新公开。可用同一原结果重新导出，不重测、不登录、不投稿。显示偏好不写 results、payload、consent 或上传 JSON，不改变摘要。投稿仍包含原电脑硬件事实供内部存储；网站和公共参考不提供电脑型号值，不能声称“电脑型号不上传”。
+
+接口名称先用 `scripts/interface_types.py --name "已记录的接口名称" --language en` 或 `normalise_interface` 核对明确别名；需要新字典时只读 `GET /api/v1/interfaces`，在内存使用有 revision 的列表，不缓存上传 JSON。已知别名用规范名，USB-C/含混 USB 3.2/未知名称不靠速度或相近名字猜分类。接入接口与内部 NVMe/PCIe 链路、连接器外形分开。
+
+如用户确认了检测之外的接入接口名称，在新测量前传 `benchmark.py --interface-name "用户确认的名称"`；该事实进入 `hardware.access_interface={name,source:user}` 并由 `project_result` 写入 `storage.connection`，不改物理身份检查所用的 `target.protocol`。已完成测量仅在用户确认后生成保留原 run_id/测量/原始 fio 的派生结果副本，以 `confirmed_interface` 添加该事实，所有后续 prepare/compare/report 使用同一副本；不覆盖旧 raw，不改变已有冻结投稿或沿旧同意重传不同内容。泛 `user_input.device_models` 只是补充展示，不自动更改接口事实。
+
+未分类名称以原文提交，服务端确认前报告仍显示该名字，全部报告/直链可见，具体接口过滤不收录；确认后只改派生分类，不改原摘要。公开浏览/搜索不触发模型，Skill 不为此自行调用模型、传账号身份或编造分类。
+
 同时展示同一工作负载的日志采样峰值、全程平均、样本数及已核实电脑接口的理论带宽换算值；明确日志窗口、稀疏/尾段覆盖限制，峰值低于理论值不等于硬件不合格或差额可追回。不要将不同阶段峰值与平均拼接为同条件比较。解释写缓存时区分 DRAM 与动态 SLC 闪存区；评测比例换算只写约数，不冒充本机实测或额外容量。
 
 交付对话必须说明测试文件去向、清理失败/空间尚未释放、达到预算或时限等执行事项；从 results.json 的 notes 与停止原因读取，不能遗漏。HTML/PDF 不展示这类交付提醒，只保留影响结果解释的测量限制（例如缓存边界未确认）、真实测试错误及方法中的写入量/时长。

@@ -112,7 +112,7 @@ def _differences(source, local, case, text):
     return '<p>'+esc(text["background"])+f'</p><div class="table-wrap"><table class="condition-differences"><thead><tr><th>{esc(text["condition"])}</th><th>{esc(text["local"])}</th><th>{esc(text["reference"])}</th></tr></thead><tbody>{body}</tbody></table></div>'
 
 
-def render_comparison(facts, result, output, language, report_text, requested_format="html", message_file=None):
+def render_comparison(facts, result, output, language, report_text, requested_format="html", message_file=None, show_computer_model=False):
     from report import esc, number, render_evaluation, export_pdf
     from community_comparison import METRICS
     validate_context(facts, result)
@@ -135,8 +135,8 @@ def render_comparison(facts, result, output, language, report_text, requested_fo
             url = _source_url(source["url"])
             profile = x_profile(source["conditions"]["x_profile_url"])
             values = " · ".join(esc(text["metric_"+key])+": "+number(source["values"][key]) for key in METRICS if source["values"].get(key) is not None)
-            matched = " / ".join(text[kind+"_model"] for kind in source["matched_on"])
-            references.append(f'<article class="comparison-source"><p><a href="{esc(url)}" rel="noopener noreferrer"><bdi>{esc(source["sample_id"])}</bdi></a> · <a href="{esc(profile)}" rel="noopener noreferrer"><bdi>X @{esc(profile.rsplit("/",1)[1])}</bdi></a> · <time>{esc(source["tested_on"])}</time></p><p>{esc(source["drive_model"] or text["unknown"])} · {esc(source["computer_model"] or text["unknown"])} · {esc(text["unverified"])}</p><p>{esc(text["matched"])}: {esc(matched or text["unknown"])}</p><p class="comparison-example">{values or esc(text["no_statistic"])}</p>'+_differences(source,local,case,text)+"</article>")
+            matched = " / ".join(text[kind+"_model"] for kind in source["matched_on"] if kind != "computer")
+            references.append(f'<article class="comparison-source"><p><a href="{esc(url)}" rel="noopener noreferrer"><bdi>{esc(source["sample_id"])}</bdi></a> · <a href="{esc(profile)}" rel="noopener noreferrer"><bdi>X @{esc(profile.rsplit("/",1)[1])}</bdi></a> · <time>{esc(source["tested_on"])}</time></p><p>{esc(source["drive_model"] or text["unknown"])} · {esc(text["unverified"])}</p><p>{esc(text["matched"])}: {esc(matched or text["unknown"])}</p><p class="comparison-example">{values or esc(text["no_statistic"])}</p>'+_differences(source,local,case,text)+"</article>")
         workload = f'{text["case_bs_bytes"]}: {case["bs_bytes"]:,} B · QD{case["qd"]} · {case["numjobs"]} {text["jobs"]} · {case["runtime_limit_seconds"]} s'
         case_label = report_text.get(group["case_name"], group["case_name"])
         state = report_text.get(case["status"],case["status"])
@@ -144,7 +144,7 @@ def render_comparison(facts, result, output, language, report_text, requested_fo
     context = _values(local, {})
     condition_rows = "".join(f'<div class="metric-line"><dt>{esc(text[key])}</dt><dd>{_display(context.get(key),text)}</dd></div>' for key in
         ("scope", "capacity_bytes", "connection", "negotiated_bps", "filesystem", "free_percent", "os_family", "os_version", "ioengine", "profile", "file_bytes", "write_budget_bytes", "seconds", "sustained_seconds"))
-    model_rows = "".join(f'<div class="metric-line"><dt>{esc(text[kind+"_model"])}</dt><dd>{esc(local["hardware"][kind]["model"] or text["unknown"])}</dd></div>' for kind in ("computer","controller","drive"))
+    model_rows = "".join(f'<div class="metric-line"><dt>{esc(text[kind+"_model"])}</dt><dd>{esc(local["hardware"][kind]["model"] or text["unknown"])}</dd></div>' for kind in (("computer","controller","drive") if show_computer_model else ("controller","drive")))
     css = (Path(__file__).resolve().parents[1]/"assets/report.css").read_text()
     direction = "rtl" if language.split("-")[0] == "ar" else "ltr"
     evaluation = render_evaluation(result,language)
@@ -162,6 +162,15 @@ def render_comparison(facts, result, output, language, report_text, requested_fo
     source, pdf_path = output/"comparison.html", output/"comparison.pdf"
     if source.is_symlink() or pdf_path.is_symlink():
         raise ValueError("Report files must not be symlinks")
+    from report_privacy import computer_models, hide_computer_html
+    # Even when showing this user's model, historical remote references must
+    # not restore computer labels that the public service no longer exposes.
+    private_models = {r["computer_model"] for g in facts["groups"] for r in g["references"] if r["computer_model"]}
+    if not show_computer_model:
+        private_models.update(computer_models(result, (report_text["computer_model"], text["computer_model"])))
+    else:
+        private_models.difference_update(computer_models(result, (report_text["computer_model"], text["computer_model"])))
+    document = hide_computer_html(document, private_models)
     source.write_text(document,encoding="utf-8")
     pdf, error = export_pdf(source,pdf_path) if requested_format == "pdf" else (None,None)
     return {"comparison_id": facts["comparison_id"], "comparison_html": str(source), "comparison_pdf": pdf, "comparison_pdf_error": error}

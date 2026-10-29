@@ -684,7 +684,7 @@ def render_diagnostics(result, text):
     return '<section id="diagnostics"><h2>' + esc(text["diagnostics"]) + '</h2>' + ''.join(parts) + '</section>'
 
 
-def render_report(result, output, language, text, requested_format="html", comparison=None, community_messages=None):
+def render_report(result, output, language, text, requested_format="html", comparison=None, community_messages=None, show_computer_model=False):
     community_html = ""
     if comparison is not None:
         from community_report import validate_context, report_messages, summary_html
@@ -734,6 +734,8 @@ def render_report(result, output, language, text, requested_format="html", compa
         ("enclosure", "enclosure_model"),
         ("controller", "controller_model"),
     ):
+        if key == "computer" and not show_computer_model:
+            continue
         item = hardware.get(key, {})
         model = (item.get("matching_model") or item.get("model")) if key in ("computer", "drive") else item.get("model")
         if key == "controller" and not model:
@@ -754,6 +756,13 @@ def render_report(result, output, language, text, requested_format="html", compa
         hardware_rows.append(
             f'<tr><th scope="row">{esc(text[label])}</th><td>{esc(model or text["source_unknown"])}</td><td class="muted">{esc(source_text) if item.get("model") else ""}</td></tr>'
         )
+    if hardware.get("access_interface") is not None:
+        from interface_types import confirmed_interface
+        interface = hardware["access_interface"]
+        if not isinstance(interface, dict) or interface.get("source") != "user":
+            raise ValueError("Invalid user-confirmed interface")
+        interface = confirmed_interface(interface.get("name"))
+        hardware_rows.append(f'<tr><th scope="row">{esc(text["protocol"])}</th><td>{esc(interface["name"])}</td><td>{esc(text["source_user"])}</td></tr>')
     hardware_html = (
         '<section id="hardware"><h2>'
         + esc(text["hardware"])
@@ -1111,6 +1120,9 @@ window.addEventListener('afterprint', () => {{
     source = output / "report.html"
     if source.is_symlink() or (output / "report.pdf").is_symlink():
         raise ValueError("Report files must not be symlinks")
+    if not show_computer_model:
+        from report_privacy import computer_models, hide_computer_html
+        document = hide_computer_html(document, computer_models(result, (text["computer_model"],)))
     source.write_text(document, encoding="utf-8")
     pdf, error = None, None
     if requested_format == "pdf":
@@ -1127,7 +1139,7 @@ window.addEventListener('afterprint', () => {{
     )
     if comparison is not None:
         from community_report import render_comparison
-        artifacts.update(render_comparison(comparison, result, output, language, text, requested_format, community_messages))
+        artifacts.update(render_comparison(comparison, result, output, language, text, requested_format, community_messages, show_computer_model))
     return artifacts
 
 
@@ -1152,6 +1164,7 @@ def main():
         help="Agent-researched reference JSON with public source links",
     )
     p.add_argument("--format", choices=["html", "pdf"], default="html")
+    p.add_argument("--show-computer-model", action="store_true", help="Display this computer model in local HTML/PDF only; never changes the submission or its hash")
     args = p.parse_args()
     try:
         result = json.loads(Path(args.input).read_text(encoding="utf-8"))
@@ -1206,7 +1219,7 @@ def main():
                 comparison = read_comparison(store,args.comparison_id)
         elif args.community_state_dir or args.community_messages:
             raise ValueError("Community report options require --comparison-id")
-        artifacts = render_report(result, output, args.language, text, args.format, comparison, args.community_messages)
+        artifacts = render_report(result, output, args.language, text, args.format, comparison, args.community_messages, args.show_computer_model)
         print(json.dumps(artifacts, ensure_ascii=False))
         return 0 if args.format == "html" or (artifacts["pdf"] and (comparison is None or artifacts.get("comparison_pdf"))) else 5
     except (ValueError, OSError) as exc:

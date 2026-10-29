@@ -38,3 +38,5 @@ Finish your local report first, then choose whether to publish it. You can decli
 
 
 Hardware and five-level performance ratings: the Skill researches reported bridge-chip names or exact branded enclosure specifications. Reports retain five raw speeds and provide one report-level set of controller, interface and drive utilisation stars with a one-sentence assessment. The Skill researches exact official specifications first; missing facts never receive invented stars, and throughput does not establish authenticity. See [hardware and rating rules](references/hardware-rating.md).
+
+Local HTML/PDF reports hide the computer model by default. Use `report.py --show-computer-model` only when you choose to show it; the same results can be re-exported without measuring again. This display preference does not change measurements or upload checksums. A voluntary upload still includes the original computer facts for internal storage; public reports and references omit the model. A confirmed access-interface name can be supplied with `benchmark.py --interface-name NAME`; this is an upload fact, distinct from the display preference. See the [CLI reference](references/cli.md).

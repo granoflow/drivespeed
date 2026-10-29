@@ -180,7 +180,7 @@ def empty_hardware():
 
 
 def collect_hardware(
-    target, computer=None, drive=None, enclosure=None, controller=None
+    target, computer=None, drive=None, enclosure=None, controller=None, access_interface=None
 ):
     hardware = empty_hardware()
     try:
@@ -255,4 +255,7 @@ def collect_hardware(
             hardware[key].update(model=value.strip(), source="user")
             if key in ("computer", "drive"):
                 hardware[key]["matching_model"] = value.strip()
+    if access_interface is not None:
+        from interface_types import confirmed_interface
+        hardware["access_interface"] = confirmed_interface(access_interface)
     return hardware
