@@ -22,6 +22,7 @@ CONDITIONS = (("scope", "storage.scope", "TEXT"), ("capacity_bytes", "storage.ca
     ("os_family", "environment.os", "TEXT"), ("os_version", "environment.os_version", "TEXT"),
     ("architecture", "environment.architecture", "TEXT"), ("ioengine", "environment.ioengine", "TEXT"),
     ("profile", "plan.profile", "TEXT"), ("file_bytes", "plan.file_bytes", "INTEGER"),
+    ("write_budget_bytes", "plan.write_budget_bytes", "INTEGER"),
     ("seconds", "plan.seconds", "INTEGER"), ("sustained_seconds", "plan.sustained_seconds", "INTEGER"),
     ("method_version", "tool.method_version", "TEXT"), ("x_profile_url", "attribution.profile_url", "TEXT"))
 WORKLOAD = (("name", "TEXT"), ("rw", "TEXT"), ("bs_bytes", "INTEGER"), ("qd", "INTEGER"), ("numjobs", "INTEGER"),
@@ -59,6 +60,30 @@ def schema(db):
         PRIMARY KEY(comparison_id,case_index,direction,sample_id),
         FOREIGN KEY(comparison_id,case_index,direction,sample_id)
           REFERENCES comparison_sources(comparison_id,case_index,direction,sample_id) ON DELETE CASCADE);""")
+    # Historical snapshots did not record this condition. Preserve NULL rather
+    # than rebuilding them from reference samples that may since have changed.
+    if "write_budget_bytes" not in {row[1] for row in db.execute("PRAGMA table_info(comparison_source_context)")}:
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if "write_budget_bytes" not in {row[1] for row in db.execute("PRAGMA table_info(comparison_source_context)")}:
+                db.execute("ALTER TABLE comparison_source_context ADD COLUMN write_budget_bytes INTEGER")
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+
+
+def _write_budget(value):
+    return value if type(value) is int and 1 <= value <= 9_007_199_254_740_991 else None
+
+
+def _statistics(measured, values):
+    median = statistics.median(values) if len(values) >= 3 else None
+    delta = (measured/median-1)*100 if measured is not None and median is not None and median > 0 else None
+    if delta is not None and not math.isfinite(delta):
+        delta = None
+    return dict(n=len(values), median=median, minimum=min(values) if len(values) >= 3 else None,
+                maximum=max(values) if len(values) >= 3 else None, delta_percent=delta)
 
 
 def _model(value):
@@ -79,9 +104,11 @@ def _conditions(local, sample):
         differences.append("unresolved_storage")
     for section, fields in (("storage", ("scope", "capacity_bytes", "connection", "negotiated_bps", "filesystem", "free_percent")),
                             ("environment", ("os", "os_version", "ioengine", "direct")),
-                            ("plan", ("profile", "file_bytes", "seconds", "sustained_seconds"))):
+                            ("plan", ("profile", "file_bytes", "write_budget_bytes", "seconds", "sustained_seconds"))):
         for field in fields:
-            a, b = local[section][field], sample[section][field]
+            a, b = local[section].get(field), sample[section].get(field)
+            if field == "write_budget_bytes":
+                a, b = _write_budget(a), _write_budget(b)
             if field == "os_version":
                 a, b = _major(a), _major(b)
             if a is None or b is None or isinstance(a, str) and _model(a) is None or isinstance(b, str) and _model(b) is None:
@@ -151,7 +178,9 @@ def build_comparison(store, result, submission_id):
                         *(sample["hardware"][kind]["model"] for kind in ("computer", "controller", "drive")), int(not differences)))
                     context = [*keys, *(_value(sample, field) for _,field,_ in CONDITIONS),
                                *(selected[field] if selected else None for field,_ in WORKLOAD)]
-                    store.db.execute("INSERT INTO comparison_source_context VALUES("+",".join("?" for _ in context)+")", context)
+                    names = ["comparison_id", "case_index", "direction", "sample_id", *[name for name,_,_ in CONDITIONS],
+                             *["case_"+name for name,_ in WORKLOAD]]
+                    store.db.execute("INSERT INTO comparison_source_context("+",".join(names)+") VALUES("+",".join("?" for _ in context)+")", context)
                     for field in differences:
                         store.db.execute("INSERT INTO comparison_differences VALUES(?,?,?,?,?)", (*keys, field))
                     if selected is not None:
@@ -162,12 +191,9 @@ def build_comparison(store, result, submission_id):
                                 metrics[metric].append(value)
                 for metric, values in metrics.items():
                     measured = _metric(case, direction, metric)
-                    median = statistics.median(values) if len(values) >= 3 else None
-                    delta = (measured/median-1)*100 if measured is not None and median is not None and median > 0 else None
-                    if delta is not None and not math.isfinite(delta):
-                        delta = None
+                    stats = _statistics(measured, values)
                     store.db.execute("INSERT INTO comparison_metrics VALUES(?,?,?,?,?,?,?,?,?,?,?)", (comparison_id, case_index, case["name"], direction,
-                        metric, len(values), measured, median, min(values) if len(values) >= 3 else None, max(values) if len(values) >= 3 else None, delta))
+                        metric, stats["n"], measured, stats["median"], stats["minimum"], stats["maximum"], stats["delta_percent"]))
     return summary(store, comparison_id)
 
 
@@ -180,6 +206,7 @@ def read_comparison(store, comparison_id):
         if digest(local) != row["content_sha256"]:
             raise CommunityError("integrity_mismatch")
         context_complete = True
+        budget_recheck = set()
         groups = {}
         for metric in store.db.execute("SELECT * FROM comparison_metrics WHERE comparison_id=? ORDER BY case_index,direction,metric", (comparison_id,)):
             key = metric["case_index"], metric["direction"]
@@ -200,7 +227,26 @@ def read_comparison(store, comparison_id):
                 _model(local["hardware"][kind]["model"]) == _model(source[kind+"_model"])]
             if context is None:
                 context_complete = False
+            else:
+                local_budget = _write_budget(local["plan"].get("write_budget_bytes"))
+                source_budget = _write_budget(context["write_budget_bytes"])
+                reason = ("unknown_write_budget_bytes" if local_budget is None or source_budget is None
+                          else "write_budget_bytes" if local_budget != source_budget else None)
+                if reason:
+                    item["comparable"] = False
+                    if reason not in item["differences"]:
+                        item["differences"].append(reason)
+                    item["conditions"]["write_budget_bytes"] = source_budget
+                    budget_recheck.add((source["case_index"], source["direction"]))
             groups[(source["case_index"], source["direction"])]["references"].append(item)
+        # Recompute only the presentation of affected historical groups, using
+        # their own frozen values. Never rewrite old facts or borrow new samples.
+        for key in budget_recheck:
+            group = groups[key]
+            for metric in group["metrics"]:
+                values = [ref["values"][metric["metric"]] for ref in group["references"]
+                          if ref["comparable"] and ref["values"].get(metric["metric"]) is not None]
+                metric.update(_statistics(metric["local_value"], values))
         for group in groups.values():
             group["metrics"].sort(key=lambda item: METRICS.index(item["metric"]))
         return {"comparison_id": comparison_id, "submission_id": row["report_id"], "run_id": row["run_id"], "content_sha256": row["content_sha256"],

@@ -154,6 +154,26 @@ class ReportTests(unittest.TestCase):
         self.assertIn('class="condition-differences"',source)
         self.assertIn('只作背景：条件不同或缺失',source)
         self.assertNotIn('class="comparison-empty"',source)
+
+    def test_write_budget_difference_and_historical_unknown_have_readable_conditions(self):
+        for budget in (None, self.local["plan"]["write_budget_bytes"]*2):
+            with self.subTest(budget=budget):
+                initial = self.facts()
+                self.store.db.execute("UPDATE comparison_source_context SET write_budget_bytes=? WHERE comparison_id=?", (budget, initial["comparison_id"]))
+                self.store.db.commit()
+                facts = read_comparison(self.store, initial["comparison_id"])
+                for language in ("zh-CN", "en", "ar"):
+                    with self.subTest(language=language), tempfile.TemporaryDirectory() as directory:
+                        labels = messages(language); text = report_messages(language)
+                        output = render_comparison(facts,self.result,directory,language,labels)
+                        source = Path(output["comparison_html"]).read_text()
+                    self.assertIn("<th>"+labels["write_budget"]+"</th><td>"+f'{self.local["plan"]["write_budget_bytes"]:,}'+"</td><td>"+
+                                  (text["unknown"] if budget is None else f"{budget:,}")+"</td>",source)
+                    self.assertNotIn("write_budget_bytes",source)
+                    self.assertNotIn("unknown_write_budget_bytes",source)
+                    self.assertIn(text["background"],source)
+                    self.assertNotIn(text["rate_more"].format(value="100.00"),source)
+                    self.assertTrue(all(m["n"] == 0 and m["median"] is None for g in facts["groups"] for m in g["metrics"]))
     def test_bad_source_or_missing_historical_context_fails_without_inventing_links(self):
         facts = self.facts(); facts["groups"][0]["references"][0]["conditions"]["x_profile_url"] = "javascript:alert(1)"
         with tempfile.TemporaryDirectory() as directory, self.assertRaises(CommunityError):

@@ -116,7 +116,7 @@ def render_comparison(facts, result, output, language, report_text, requested_fo
     from report import esc, number, render_evaluation, export_pdf
     from community_comparison import METRICS
     validate_context(facts, result)
-    text = report_messages(language, message_file)
+    text = {**report_messages(language, message_file), "write_budget_bytes": report_text["write_budget"]}
     local, output = facts["local"], Path(output)
     sections = []
     # With no references, empty per-metric tables only duplicate report A.
@@ -143,7 +143,7 @@ def render_comparison(facts, result, output, language, report_text, requested_fo
         sections.append(f'<section class="comparison-group"><h2>{esc(case_label)} · {esc(report_text[group["direction"]])} · {esc(state)}</h2><p>{esc(workload)}</p><div class="table-wrap"><table class="comparison-metrics"><thead><tr><th>{esc(text["metric"])}</th><th>{esc(text["local"])}</th><th>{esc(text["median"])}</th><th>{esc(text["delta"])}</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div><p>{esc(text["threshold"])}</p><h3>{esc(text["sources"])}</h3>{"".join(references) or "<p>"+esc(text["no_sources"])+"</p>"}</section>')
     context = _values(local, {})
     condition_rows = "".join(f'<div class="metric-line"><dt>{esc(text[key])}</dt><dd>{_display(context.get(key),text)}</dd></div>' for key in
-        ("scope", "capacity_bytes", "connection", "negotiated_bps", "filesystem", "free_percent", "os_family", "os_version", "ioengine", "profile", "file_bytes", "seconds", "sustained_seconds"))
+        ("scope", "capacity_bytes", "connection", "negotiated_bps", "filesystem", "free_percent", "os_family", "os_version", "ioengine", "profile", "file_bytes", "write_budget_bytes", "seconds", "sustained_seconds"))
     model_rows = "".join(f'<div class="metric-line"><dt>{esc(text[kind+"_model"])}</dt><dd>{esc(local["hardware"][kind]["model"] or text["unknown"])}</dd></div>' for kind in ("computer","controller","drive"))
     css = (Path(__file__).resolve().parents[1]/"assets/report.css").read_text()
     direction = "rtl" if language.split("-")[0] == "ar" else "ltr"
