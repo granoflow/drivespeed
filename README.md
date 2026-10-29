@@ -1,10 +1,10 @@
-# 移动硬盘测速（DriveSpeed）
+# 硬盘测速（DriveSpeed）
 
 简体中文 · [English](README.en.md)
 
-**你的移动硬盘几斤几两？现在就来测一下吧。**
+**你的硬盘表现如何？现在就来测一下吧。**
 
-让 AI 帮你测读写速度、分析性能瓶颈，生成看得懂的 HTML 报告，也能保存为 PDF。
+让 AI 帮你测读写速度、分析性能瓶颈，生成看得懂的 HTML 报告，也能保存为 PDF。目标可选内置或外置本地硬盘上的可读写目录，包括系统盘用户目录；先明确目录并查看空间、累计写入量与时限，不访问裸盘。
 
 ## 安装
 
@@ -26,6 +26,15 @@
 
 Agent 会检查并安装所需的 fio 测速工具，引导你完成测试和查看报告。
 
-目前支持 macOS；Linux 为实验性支持，Windows 暂不支持测速。
+macOS 支持；Linux 与 Windows 本地测速为实验性支持，仍需实机验证。Windows 测试文件会保留；社区分享同样为实验性，私有缓存需支持 ACL 的本地卷（如 NTFS）。
 
 [详细用法](references/cli.md) · [测试方法](references/methodology.md) · [专项测试](references/diagnostics.md) · [MIT 开源许可](LICENSE) · [第三方许可](THIRD_PARTY_NOTICES.md)
+
+## 自愿公开与横向测评
+
+先完成本地报告，再决定是否公开；拒绝后可随时从保留结果改主意。公开报告关联本人验证过的 X 链接，可附一句介绍。相似设备只按可比条件提供参考，不设排行榜；样本不足时明确说明。社区 API、A/B 报告和恢复工具已实现，本地模拟验证不代表真实 X 或网站已经上线。
+
+[分享与恢复](references/community.md) · [评价规则](references/evaluation.md) · [Agent 数据使用约定](references/agent-data-use.md)
+
+
+硬件链路与五级评价：Skill 可研究目标设备名称直接暴露的主控，以及品牌硬盘盒的官方规格；报告保留五项原始速度，整份报告展示相对主控、接口和硬盘的能力利用率星级及一句点评。先补查准确型号的官方参考，缺资料不编造星级，不据测速鉴定真伪。详见[规则与参考输入](references/hardware-rating.md)。

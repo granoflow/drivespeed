@@ -12,7 +12,7 @@
 
 ## 输入与重生成
 
-保存 UTF-8 JSON，字段如下；所有可见文本使用用户指定报告语言：
+正常 Skill 在内存中构建以下对象；经 Python API 或 UTF-8 标准输入传给渲染器，不创建评价 JSON 缓存。字段如下；所有可见文本使用用户指定报告语言：
 
 ```json
 {
@@ -29,11 +29,20 @@
 每个 sources 项包括 `url`（HTTPS 原始页面）、`label`（清晰来源名）、`checked_at`（实际查阅日期）。无网络证据用空列表，不能虚构链接或日期。可使用有效本地缓存中的原始查阅日期。
 
 ```bash
-python3 scripts/report.py --input /path/to/results.json --evaluation-file /path/to/evaluation.json --output /path/to/final-report --language zh-CN --format pdf
+python3 scripts/report.py --input /path/to/results.json --evaluation-stdin --output /path/to/final-report --language zh-CN --format pdf
 ```
 
-评价也可放在派生结果的 `evaluation` 字段；原始 fio 结果不可改写。绑定不匹配会报错，防止套用其他运行或语言的建议。省略评价的底层渲染仍兼容旧结果，但执行 skill 的 AI 不应将其作为最终完整评价报告交付。脚本的结构验证不代表事实核验；交付前检查来源、数值、条件、离线链接与 PDF 排版。
+上面命令由 Agent 以子进程 stdin 传入序列化后的内存对象（不通过 shell 拼接正文）；不能交互等待用户输入 JSON。旧 `--evaluation-file` 继续兼容已有使用者。
+
+有比较 ID 时添加 `--comparison-id ID --community-state-dir /path/to/private-state`，A/B 会读取同一冻结事实。Agent 先用 `read_comparison` 读取 typed 事实，评价可引用已公开来源的原始链接/原查阅日期，并明确快照时点、可比条件与不足项。社区事实不等于当前实时公开资格；需要更新时由用户发起刷新。
+
+评价也可放在内存派生结果的 `evaluation` 字段；原始 fio 结果不可改写。绑定不匹配会报错，防止套用其他运行或语言的建议。省略评价的底层渲染仍兼容旧结果，但执行 skill 的 AI 不应将其作为最终完整评价报告交付。脚本的结构验证不代表事实核验；交付前检查来源、数值、条件、离线链接与 PDF 排版。
 
 ## 面向两类读者的编辑检查
 
 先给明确判断和行动优先级，再列证据与未确认项。短时 QD1、短时 QD16、持续写入分开呈现；平均速度必须写明是哪一项、哪个时间窗口。专业参数保留在表格和方法区，正文只解释影响理解或决策的术语。每种限制集中说明一次，不在摘要、图表、评价和页脚反复重复；删去泛泛的免责句，保留真实测量缺口及其具体后果。对证据不足的问题给出下一项可验证的检查，而不是只说无法判断。翻译沿用此结构，不复制本机结论。
+
+
+## 硬件与整份报告星级
+
+最终 HTML/PDF 会重新计算[三维能力利用率](hardware-rating.md)：相对主控、相对接口、相对硬盘各一组星级，并给一句话点评。五项原始数值保留。AI 三段评价解释参考性质、可能限制及升级收益；低利用率不等于差品质，单次偏差不证明真伪。先补查准确型号的官方规格，不编造未知星级。接口支持能力、系统报告段、当前协商段及厂商额定文件测速分别引用；只有主控名也可以查官网，不因硬盘盒商品名未知而忽略已确认主控。

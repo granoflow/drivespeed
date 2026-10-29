@@ -14,12 +14,38 @@ h2, summary { font-size: 19px; font-weight: 650; margin: 0 0 20px; }
 p { line-height: 1.65; }
 .run-meta { display: flex; gap: 20px; flex-wrap: wrap; margin: 0; color: #526579; font-size: 13px; }
 button { flex-shrink: 0; background: #174e7d; border: 0; border-radius: 8px; color: white; padding: 12px 20px; font: inherit; cursor: pointer; }
+button { min-height: 44px; }
+a { color: #174e7d; text-underline-offset: 3px; }
+a:visited { color: #665774; }
 button:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px solid #d49220; outline-offset: 4px; }
+.comparison-lead { font-size: 22px; line-height: 1.5; font-weight: 650; }
+.comparison-detail { display: block; font-size: 12px; color: #526579; margin-top: 5px; }
+.comparison-source { border-top: 1px solid #dbe4ee; padding-top: 12px; margin-top: 20px; }
+.comparison-source p, .condition-differences { font-size: 13px; }
+.comparison-source a, .community-report td, .community-report th { overflow-wrap: anywhere; }
+.comparison-metrics { min-width: 620px; }
+.community-report button { min-height: 44px; }
+.community-report .metric-line dd { flex-shrink: 1; overflow-wrap: anywhere; max-width: 65%; }
+@media print {
+  .community-report .table-wrap { overflow: visible; }
+  .community-report .comparison-metrics { min-width: 0; table-layout: fixed; }
+  .community-report .comparison-metrics th, .community-report .comparison-metrics td { font-size: 9pt; padding: 8px 5px; }
+  .community-report thead { display: table-header-group; }
+  .community-report tr { break-inside: avoid; }
+  .community-report h2, .community-report h3 { break-after: avoid; }
+  .community-report .comparison-source,
+  .community-report .comparison-group > .table-wrap,
+  .community-report .comparison-interpretation,
+  .community-report .comparison-method { break-inside: avoid; }
+  .community-report .comparison-group > h2,
+  .community-report .comparison-group > h2 + p { break-after: avoid; }
+}
 .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0 0 28px; }
 .card { padding: 24px; border: 1px solid #dbe4ee; border-radius: 12px; background: white; }
 dt { font-size: 14px; color: #526579; }
 dd { direction: ltr; margin: 0; font-variant-numeric: tabular-nums; }
 .card dd { font-size: clamp(27px, 3.3vw, 39px); font-weight: 650; letter-spacing: -.035em; margin-top: 14px; line-height: 1.2; }
+.card dd.value-long { min-width: 0; overflow-wrap: anywhere; font-size: clamp(17px, 1.5vw, 24px); }
 .card[data-state="not_measured"] dd { font-size: 26px; direction: inherit; }
 .unit { font-size: 13px; font-weight: 400; color: #526579; letter-spacing: 0; display: block; margin-top: 6px; }
 section, details { background: white; padding: 24px; border-radius: 12px; margin: 20px 0; border: 1px solid #e0e6ed; }
@@ -85,6 +111,8 @@ footer { margin-top: 32px; color: #526579; font-size: 14px; }
 }
 @page { size: A4; margin: 14mm; }
 @media print {
+  body:not(.community-report) section, body:not(.community-report) details { padding: 10px; margin-block: 10px; }
+  body:not(.community-report) .card dd.value-long { font-size: 12pt; }
   :root { background: white; }
   body { padding: 0; font-size: 9pt; }
   main { max-width: none; }
@@ -168,6 +196,7 @@ footer { margin-top: 32px; color: #526579; font-size: 14px; }
 html[dir="rtl"] .cache-reference, html[dir="rtl"] .card .notice { direction: rtl; }
 
 @media print {
+  #evaluation-bottleneck, #evaluation-upgrades, #evaluation-anomalies { break-inside: avoid; }
   #method td, #method th, #environment table td, #environment table th { padding-block: 4px; }
 }
 
@@ -189,3 +218,34 @@ html[dir="rtl"] .cache-reference, html[dir="rtl"] .card .notice { direction: rtl
 
 #user-input .user-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 #user-input h3 { font-size: 14px; margin: 20px 0 8px; break-after: avoid; }
+
+@media print {
+  body:not(.community-report) h2 { margin-bottom: 12px; }
+  body:not(.community-report) details > summary { margin-bottom: 10px; }
+  body:not(.community-report) .cards { margin-bottom: 12px; }
+  body:not(.community-report) .metric-guide { gap: 12px 24px; margin-block: 14px; }
+  body:not(.community-report) footer { break-inside: avoid; margin-top: 8px; }
+  body:not(.community-report) .report-ending { break-inside: avoid; }
+  body:not(.community-report) .footer-content { display: flex; justify-content: space-between; gap: 16px; border: 0; border-top: 1px solid #dbe4ee; border-radius: 0; padding-top: 6px; }
+  body:not(.community-report) .project, body:not(.community-report) .promotion { padding: 0; border: 0; background: transparent; }
+  body:not(.community-report) .project-name { font-size: 9pt; }
+  body:not(.community-report) .project p, body:not(.community-report) .promotion p { display: none; }
+  body:not(.community-report) .promotion-link { font-size: 8pt; }
+  body:not(.community-report) .privacy { margin-top: 5px; }
+}
+
+#hardware-assessment th, #hardware-assessment td { overflow-wrap: anywhere; }
+@media screen and (max-width: 700px) {
+  #hardware-assessment > table { display: block; }
+  #hardware-assessment > table > thead { display: none; }
+  #hardware-assessment > table > tbody { display: block; }
+  #hardware-assessment > table > tbody > tr { display: grid; grid-template-columns: 1fr 1fr; padding: 10px 0; border-bottom: 1px solid #dbe4ee; }
+  #hardware-assessment > table > tbody > tr > th { grid-column: 1 / -1; }
+  #hardware-assessment > table > tbody > tr > * { border: 0; padding: 5px 8px; text-align: start; }
+  #hardware-assessment .performance-ratings tr > td:last-child { grid-column: 1 / -1; }
+}
+@media print {
+  #hardware-assessment > p { break-after: avoid; }
+}
+
+.component-rating-stars { white-space: nowrap; font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif; }

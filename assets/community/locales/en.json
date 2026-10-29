@@ -1,0 +1,76 @@
+{
+  "share_notice": "The report and your X link will be public only after your explicit consent and review. Account control and checksums do not verify the measurements.",
+  "generic": {
+    "message": "The community operation could not be completed.",
+    "next_action": "Use list to inspect local history, then choose the matching operation. Do not delete state or bypass consent."
+  },
+  "arguments": {
+    "message": "The command arguments are invalid.",
+    "next_action": "Read the selected subcommand --help; use full option names once each."
+  },
+  "input": {
+    "message": "The selected report or public fields are not valid.",
+    "next_action": "Check the named fields against the preserved original result. Do not invent missing measurements, remove the integrity notice or start another benchmark automatically."
+  },
+  "input_access": {
+    "message": "The selected result is unavailable or is not an ordinary file.",
+    "next_action": "Choose the preserved results.json explicitly. For a cached report use preview by submission ID; refusing upload does not require the original file."
+  },
+  "parameters": {
+    "message": "Required historical test parameters are missing.",
+    "next_action": "Use an original result containing the named parameters, or keep the local report. Do not fill historical values from the current machine or rerun a benchmark without permission."
+  },
+  "consent": {
+    "message": "This exact report does not have current explicit publication consent.",
+    "next_action": "Run preview for this submission ID, show the X link and privacy notice, and ask for the current decision. Only after explicit agreement call consent with --decision publish and the returned --notice-version."
+  },
+  "integrity": {
+    "message": "The frozen report no longer matches its recorded checksum; further upload has stopped.",
+    "next_action": "Preserve the cache and original result. If a previous request may have reached the service, check its receipt first. Prepare a new snapshot and obtain fresh consent; do not rewrite the checksum."
+  },
+  "not_found": {
+    "message": "That local report was not found.",
+    "next_action": "Use list to select an existing submission ID or ask the user for a preserved result; do not scan the disk."
+  },
+  "state": {
+    "message": "Private local sharing state could not be used safely.",
+    "next_action": "Keep existing files. Check ownership, space and concurrent operations; after an existing operation finishes, retry once and use list to reconcile. Choose a new private --state-dir if needed; never overwrite an unrelated database."
+  },
+  "version": {
+    "message": "This snapshot or cache version is unsupported.",
+    "next_action": "Use a compatible DriveSpeed version or prepare again from the retained original result and obtain fresh consent. Do not edit version labels or checksums."
+  },
+  "conflict": {
+    "message": "A frozen snapshot with that ID already exists.",
+    "next_action": "Use preview for the existing ID. To publish different content, prepare a new snapshot and obtain a new explicit decision; do not overwrite it."
+  },
+  "language": {
+    "message": "The requested UI language or message file is not supported.",
+    "next_action": "Use --ui-language en, zh or ar, or supply --ui-messages with a complete message template from assets/community/locales/en.json."
+  },
+  "authorization_pending": "Open the verification URL, match the code and confirm this report. The command waits up to 10 minutes. A confirmation page is not an acceptance receipt.",
+  "credentials": {
+    "message": "The private management credential is missing or belongs to a different service.",
+    "next_action": "Preserve local state. Do not generate a replacement token for this ID; choose the original state directory and service."
+  },
+  "busy": {
+    "message": "Another sharing operation owns this report.",
+    "next_action": "Wait for that operation to finish, then retry by the same submission ID. Do not remove its lock file."
+  },
+  "network": {
+    "message": "The community service response is unavailable or could not be verified.",
+    "next_action": "Keep the same report ID and state. Check its receipt before retrying; respect Retry-After and never bypass TLS or change measurements."
+  },
+  "http": {
+    "message": "The community service rejected this operation.",
+    "next_action": "Check the stable error code and preserved report. Use receipt before another submission; if restricted, contact X @slime5409 to request an unlock."
+  },
+  "authorization": {
+    "message": "Authorization did not complete for this report.",
+    "next_action": "Keep the local report. A refusal is not permission to upload; obtain a fresh explicit decision before starting another authorization flow."
+  },
+  "samples": {
+    "message": "No usable reference snapshot is available.",
+    "next_action": "Keep your local report. If the user explicitly wants a fresh query, use receipt with --refresh-similar; do not invent samples or rerun tests automatically."
+  }
+}

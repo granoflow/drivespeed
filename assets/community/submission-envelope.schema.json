@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drivespeed.anz.tv/schemas/submission-envelope-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "payload_json": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 262144
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "const": "SHA-256"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "sha256"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "payload_json",
+    "integrity"
+  ]
+}

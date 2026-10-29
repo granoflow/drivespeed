@@ -1,4 +1,4 @@
 interface:
-  display_name: "移动硬盘测速（DriveSpeed）"
-  short_description: "你的移动硬盘几斤几两？现在就来测一下吧。"
-  default_prompt: "Use $drivespeed to test the selected external drive and report in my language."
+  display_name: "硬盘测速（DriveSpeed）"
+  short_description: "测试本地硬盘表现，生成报告并自愿分享横向比较。"
+  default_prompt: "Use $drivespeed to test my explicitly selected internal or external local drive directory, report in my language, and ask separately whether I want to publish this report."

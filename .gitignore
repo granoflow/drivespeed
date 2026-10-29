@@ -5,3 +5,6 @@ diskbench-results/
 
 # Local reports and development evidence; never ship user device data.
 docs-temp/
+
+# Website is maintained in a separate private local repository.
+/website

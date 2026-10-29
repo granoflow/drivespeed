@@ -407,9 +407,10 @@ class ProgressAndReportTests(unittest.TestCase):
             outcome="partial",
             synthetic=True,
             target={
-                "device": "<script>alert(1)</script>",
+                "device": "PRIVATE-DEVICE-ID",
                 "path": "/Users/secret/drive",
             },
+            hardware={"drive": {"model": "<script>alert(1)</script>", "source": "user"}},
             environment={
                 "fio": {"version": "fio-3.43", "path": "/Users/secret/bin/fio"}
             },
@@ -426,6 +427,7 @@ class ProgressAndReportTests(unittest.TestCase):
             paths = report.render_report(result, output, language, messages(language))
             source = Path(paths["html"]).read_text()
             self.assertNotIn("<script>alert(1)</script>", source)
+            self.assertNotIn("PRIVATE-DEVICE-ID", source)
             self.assertIn("&lt;script&gt;", source)
             self.assertNotIn("/Users/secret", source)
             self.assertIn('href="https://github.com/granoflow/drivespeed"', source)

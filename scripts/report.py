@@ -17,12 +17,14 @@ from urllib.parse import urlsplit
 
 from progress import ASSETS, language_default, messages
 from workloads import sustained_summary, cache_assessment, job_label
+from performance_rating import interface_catalog, link_reference, component_summary
 from reference_data import (
     load_reference_data,
     validate_reference_data,
     load_reference_cache,
     cache_reference_data,
     connection_limits,
+    apply_hardware_specs,
 )
 
 
@@ -34,6 +36,61 @@ def number(value):
     if value is None or not isinstance(value, (int, float)) or not math.isfinite(value):
         return "—"
     return f"{value:,.2f}"
+
+
+def render_hardware_assessment(result, text):
+    """Show detected segments, rated device specifications and evidence-bound grades."""
+    hardware = result.get("hardware", {})
+    references = validate_reference_data(result.get("references") or {"items": []})
+    body = []
+    known = [link_reference(link) for link in hardware.get('links', [])]
+    minimum = min((fact['mb_s'] for fact in known if fact), default=None)
+    for link in hardware.get("links", []):
+        fact = link_reference(link)
+        if not fact:
+            continue
+        state = text["link_negotiated"] if link.get("state") == "negotiated" else text["link_reported"]
+        maximum = link_reference(dict(kind=link.get('kind'), gt_s=link.get('max_gt_s'), lanes=link.get('max_lanes')))
+        if maximum:
+            state += ' · ' + text['link_max'] + ': ' + maximum['label']
+        if minimum == fact['mb_s']:
+            state += ' · ' + text['link_minimum']
+        body.append(f'<tr><th>{esc(fact["label"])}</th><td>{esc(state)}</td><td>{number(fact["mb_s"])} MB/s · {esc(text["link_" + fact["basis"]])}</td></tr>')
+    links = '<table><tbody>' + ''.join(body) + '</tbody></table>' if body else '<p>' + esc(text['link_unknown']) + '</p>'
+    specs = []
+    if references.get('for_drive_model') == hardware.get('drive', {}).get('model'):
+        for spec in references.get('hardware_specs', []):
+            if spec['model'] != hardware.get(spec['component'], {}).get('model'):
+                continue
+            specs.append(f'<tr><th>{esc(text[spec["component"] + "_model"])}</th><td>{esc(spec["model"])} · {esc(spec["interface"])}<br>{esc(spec["conditions"])}</td><td><a href="{esc(spec["source_url"])}" rel="noreferrer">{esc(spec["source_label"])}</a> · {esc(references.get("checked_at", ""))}</td></tr>')
+    catalog = interface_catalog()
+    for chip in catalog.get('controllers', []):
+        if chip['model'] == hardware.get('controller', {}).get('model'):
+            specs.append(f'<tr><th>{esc(text["controller_model"])}</th><td>{esc(chip["model"])} · {esc(chip["interface"])}</td><td><a href="{esc(chip["source_url"])}" rel="noreferrer">ASMedia</a> · {esc(catalog["checked_at"])}</td></tr>')
+    spec_html = '<table><tbody>' + ''.join(specs) + '</tbody></table>' if specs else ''
+    summary = component_summary(result)
+    rows = []
+    for row in summary['rows']:
+        label = text['util_' + row['component']]
+        grade = ('<span class="component-rating-stars" role="img" aria-label="' + str(row['level']) + '/5">' + '&#127775;' * row['level'] + '</span>') if row['level'] else esc(text['util_needed'])
+        evidence = []
+        for d in row['directions']:
+            evidence.append(f'{esc(text["util_" + d["direction"]])} · QD16: {number(d["measured"])} / {number(d["bound"])} MB/s = {number(d["ratio"] * 100)}%')
+        for ref in row['references']:
+            if ref.get('source_url'):
+                evidence.append(f'<a href="{esc(ref["source_url"])}" rel="noreferrer">{esc(ref["source_label"])}</a> · {esc(ref["checked_on"])} · {esc(text["util_" + ref["basis"]])}<br>{esc(ref["conditions"])}')
+        rows.append(f'<tr><th>{esc(label)}</th><td>{grade}</td><td>{"<br>".join(evidence)}</td></tr>')
+    comment = text['util_comment_' + summary['status']]
+    if summary['bottleneck']:
+        comment = comment.replace('{component}', text['util_name_' + summary['bottleneck']])
+    catalog_rows = []
+    for item in catalog['items']:
+        link = dict(item, lanes=4) if item['kind'] == 'pcie' else item
+        fact = link_reference(link)
+        catalog_rows.append(f'<tr><th>{esc(fact["label"])}</th><td>{number(fact["mb_s"])} MB/s · {esc(text["link_" + fact["basis"]])}</td><td><a href="{esc(fact["source_url"])}" rel="noreferrer">{esc(text["rating_source"])}</a></td></tr>')
+    return (f'<section id="hardware-assessment"><h2>{esc(text["hardware_assessment"])}</h2><p>{esc(text["link_scope"])}</p>{links}{spec_html}'
+            f'<h3>{esc(text["util_title"])}</h3><table class="performance-ratings"><tbody>{"".join(rows)}</tbody></table><p class="component-comment">{esc(comment)}</p><p>{esc(text["util_scope"])}</p>'
+            f'<details><summary>{esc(text["interface_catalog"])}</summary><p>{esc(text["link_scope"])} · {esc(catalog["checked_at"])}</p><table><tbody>{"".join(catalog_rows)}</tbody></table></details></section>')
 
 
 def render_user_input(result, language, text):
@@ -627,7 +684,13 @@ def render_diagnostics(result, text):
     return '<section id="diagnostics"><h2>' + esc(text["diagnostics"]) + '</h2>' + ''.join(parts) + '</section>'
 
 
-def render_report(result, output, language, text, requested_format="html"):
+def render_report(result, output, language, text, requested_format="html", comparison=None, community_messages=None):
+    community_html = ""
+    if comparison is not None:
+        from community_report import validate_context, report_messages, summary_html
+        validate_context(comparison, result)
+        comparison_text = report_messages(language, community_messages)
+        community_html = '<section id="community-comparison"><h2>'+esc(comparison_text["title"])+"</h2>"+summary_html(comparison,comparison_text)+f'<p><a href="comparison.html">{esc(comparison_text["title"])} →</a></p><p>{esc(comparison_text["unverified"])}</p></section>'
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     cases = result.get("cases", [])
@@ -637,12 +700,14 @@ def render_report(result, output, language, text, requested_format="html"):
     target = result.get("target", {})
 
     def card(label, value, metric, unit="MB/s", state="measured", note=""):
+        value_class = ' class="value-long"' if state == "measured" and len(str(value)) > 14 else ""
         return (
             f'<div class="card" data-metric="{esc(metric)}" data-state="{esc(state)}"><dt>{esc(label)}</dt>'
-            f'<dd>{esc(value)}<span class="unit">{esc(unit)}</span>{note}</dd></div>'
+            f'<dd{value_class}>{esc(value)}<span class="unit">{esc(unit)}</span>{note}</dd></div>'
         )
 
     project = json.loads((ASSETS / "project.json").read_text(encoding="utf-8"))
+    from agent_usage import agent_usage_html
     repository_url = project["repository_url"]
     if not repository_url.startswith("https://github.com/"):
         raise ValueError("Project repository URL must use HTTPS on github.com")
@@ -670,7 +735,7 @@ def render_report(result, output, language, text, requested_format="html"):
         ("controller", "controller_model"),
     ):
         item = hardware.get(key, {})
-        model = item.get("model")
+        model = (item.get("matching_model") or item.get("model")) if key in ("computer", "drive") else item.get("model")
         if key == "controller" and not model:
             candidates = item.get("candidates") or hardware.get("enclosure", {}).get(
                 "bridge_candidates", []
@@ -683,6 +748,7 @@ def render_report(result, output, language, text, requested_format="html"):
             if source == "user"
             else text["source_unknown"]
             if source == "unavailable"
+            else text["source_reference"] if source == "reference"
             else text["source_system"]
         )
         hardware_rows.append(
@@ -890,7 +956,6 @@ def render_report(result, output, language, text, requested_format="html"):
         f'<div class="metric-line"><dt>{esc(text["smart"])}</dt><dd>{esc(target.get("smart") or text["unknown"])}</dd></div>'
     )
     for key, label in [
-        ("device", "device"),
         ("filesystem", "filesystem"),
         ("protocol", "protocol"),
     ]:
@@ -902,7 +967,7 @@ def render_report(result, output, language, text, requested_format="html"):
         ("file_size", config.get("file_bytes")),
         ("reserve", config.get("reserve_bytes")),
         ("max_duration", config.get("max_runtime_seconds")),
-        ("write_budget", config.get("max_write_bytes")),
+        ("write_budget", config.get("max_write_bytes", config.get("write_budget_bytes", config.get("write_budget")))),
         ("actual_write", result.get("actual_write_bytes")),
         ("duration", result.get("elapsed_seconds")),
     ]:
@@ -911,8 +976,11 @@ def render_report(result, output, language, text, requested_format="html"):
         )
     # Explicit allowlist: never dump arbitrary raw environment, error strings, commands or paths into public HTML.
     env = result.get("environment", {})
-    public_env = {k: env.get(k) for k in ("os", "architecture", "engine")}
+    public_env = {"os_family": env.get("os_family"), "os_version": env.get("os_version"),
+                  "architecture": env.get("architecture"), "ioengine": env.get("engine")}
     public_env["fio"] = env.get("fio", {}).get("version") if env.get("fio") else None
+    environment_html = "".join(f'<div class="metric-line"><dt>{esc(text[key if key != "fio" else "fio_version"])}</dt><dd>{esc(value or text["unknown"])}</dd></div>'
+        for key,value in public_env.items())
     depth_rows = "".join(
         "<tr><td>"
         + esc(text.get(c["name"], c["name"]))
@@ -1004,25 +1072,30 @@ def render_report(result, output, language, text, requested_format="html"):
     long_summary_html = f'''<h2 class="group-title">{esc(text["long_group"])}</h2><p class="group-caption">QD {esc(sustained_case.get("qd", "—"))} · {number(sustained_case.get("metrics", {}).get("runtime_ms", 0) / 1000)} s</p>
 <dl class="cards long-cards">{"".join(cards)}</dl><div class="summary-notes"><p>* {esc(text["cache_summary_note"])}</p></div>''' if result.get('plan', {}).get('profile') not in ('mapping', 'integrity') else ''
     sustained_html = f'''<section id="sustained"><h2>{esc(text["sustained"])}</h2><p class="muted" id="tail-speed-note">{esc(text["tail_explanation"])}</p><div class="sustained-grid"><div>{chart(series, text)}</div><dl>{"".join(lines)}</dl></div>{cache_html}</section>''' if result.get('plan', {}).get('profile') not in ('mapping', 'integrity') else ''
+    drive = hardware.get("drive", {})
+    object_line = str(drive.get("matching_model") or drive.get("model") or text["unknown"])+" · "+text.get("scope_"+str(target.get("scope")),text["unknown"])
     document = f'''<!doctype html>
 <html lang="{esc(language)}" dir="{direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{esc(text["title"])}</title><style>{css}</style></head><body><main>
-<header><div><h1>{esc(text["title"])}</h1><p class="run-meta"><time datetime="{esc(created)}">{esc(created_display)}</time><span>{esc(status)} · {len(completed)}/{len(cases)}</span></p></div><button type="button" title="{esc(text["print_hint"])}" onclick="window.print()">{esc(text["download"])}</button></header>
+<header><div><h1>{esc(text["title"])}</h1><p>{esc(object_line)}</p><p class="run-meta"><time datetime="{esc(created)}">{esc(created_display)}</time><span>{esc(status)} · {len(completed)}/{len(cases)}</span></p></div><button type="button" title="{esc(text["print_hint"])}" onclick="window.print()">{esc(text["download"])}</button></header>
 {sample}
 {('<h2 class="group-title">' + esc(text["short_group"]) + '</h2><p class="group-caption">' + esc(text["short_group_note"]) + '</p><dl class="cards short-cards">' + "".join(short_cards) + '</dl>') if short_cards else ''}
 {long_summary_html}
 {render_diagnostics(result, text)}
 {render_peak_comparison(result, text)}
-{render_evaluation(result, language)}
 {hardware_html}
+{render_hardware_assessment(result, text)}
+{render_evaluation(result, language)}
 {render_user_input(result, language, text)}
+{community_html}
 {readable_html}
 {reference_html}
 {sustained_html}
 <details id="results"><summary>{esc(text["full_results"])}</summary><dl class="metric-guide">{metric_guide}</dl><div class="table-wrap">{table}</div></details>
-<details id="environment"><summary>{esc(text["environment"])}</summary><dl class="metadata">{"".join(metadata)}</dl><pre>{esc(json.dumps(public_env, ensure_ascii=False, indent=2))}</pre>{depth_table}</details>
-<details id="method"><summary>{esc(text["method"])}</summary><p>{esc(text["method_text"])}</p><p>{esc(text["window_method"])}</p><p>{esc(text["sensors_limit"])}</p>{cache_method}<div class="table-wrap">{config_table}</div></details>
+<details id="environment"><summary>{esc(text["environment"])}</summary><dl class="metadata">{"".join(metadata)}{environment_html}</dl>{depth_table}</details>
+<div class="report-ending"><details id="method"><summary>{esc(text["method"])}</summary><p>{esc(text["method_text"])}</p><p>{esc(text["window_method"])}</p><p>{esc(text["sensors_limit"])}</p>{cache_method}<div class="table-wrap">{config_table}</div></details>
 {('<aside class="run-notes">' + "".join(f"<p>{esc(n)}</p>" for n in notes) + "</aside>") if notes else ""}
-<footer><div class="footer-content"><div class="project">{project_html}</div>{promotion_html}</div><p class="privacy">{esc(text["privacy"])} {esc(text["raw"])}</p></footer>
+{agent_usage_html()}
+<footer><div class="footer-content"><div class="project">{project_html}</div>{promotion_html}</div><p class="privacy">{esc(text["privacy"])} {esc(text["raw"])}</p></footer></div>
 </main><script>
 const collapsedForPrint = [];
 window.addEventListener('beforeprint', () => {{
@@ -1044,7 +1117,7 @@ window.addEventListener('afterprint', () => {{
         pdf, error = export_pdf(source, output / "report.pdf")
         if not pdf:
             print(text["pdf_failed"], file=sys.stderr)
-    return dict(
+    artifacts = dict(
         skill_repository=repository_url,
         language=language,
         requested_format=requested_format,
@@ -1052,6 +1125,10 @@ window.addEventListener('afterprint', () => {{
         pdf=pdf,
         pdf_error=error,
     )
+    if comparison is not None:
+        from community_report import render_comparison
+        artifacts.update(render_comparison(comparison, result, output, language, text, requested_format, community_messages))
+    return artifacts
 
 
 def main():
@@ -1061,7 +1138,12 @@ def main():
     p.add_argument("--language", default=language_default())
     p.add_argument("--messages")
     p.add_argument("--user-input-file", help="Optional run-bound conversational additions JSON")
-    p.add_argument("--evaluation-file", help="Run-bound, localized AI evaluation JSON")
+    evaluation_input = p.add_mutually_exclusive_group()
+    evaluation_input.add_argument("--evaluation-file", help="Run-bound, localized AI evaluation JSON (legacy compatible)")
+    evaluation_input.add_argument("--evaluation-stdin", action="store_true", help="Read bounded run-bound evaluation JSON from stdin, without creating a JSON cache file")
+    p.add_argument("--comparison-id", help="Offline typed comparison ID; also produce comparison.html/PDF without changing original results")
+    p.add_argument("--community-state-dir", help="Private community SQLite directory containing that comparison")
+    p.add_argument("--community-messages", help="Complete comparison report translation based on assets/community/report-locales/en.json")
     p.add_argument(
         "--refresh-references", action="store_true", help="Ignore local reference cache"
     )
@@ -1081,6 +1163,11 @@ def main():
             result["user_input"] = json.loads(Path(args.user_input_file).read_text(encoding="utf-8"))
         if args.evaluation_file:
             result["evaluation"] = json.loads(Path(args.evaluation_file).read_text(encoding="utf-8"))
+        elif args.evaluation_stdin:
+            from community_data import parse_json, MAX_BYTES
+            if sys.stdin.isatty():
+                raise ValueError("Evaluation stdin requires non-interactive input")
+            result["evaluation"] = parse_json(sys.stdin.buffer.read(MAX_BYTES+1))
         output = Path(args.output).expanduser().absolute()
         if any(p.is_symlink() for p in (output, *output.parents)):
             raise ValueError("Output path must not contain symlinks")
@@ -1109,10 +1196,19 @@ def main():
             )
             result["references"] = cached or {}
             result["reference_cache"] = info
+        apply_hardware_specs(result.setdefault("hardware", {}), result.get("references") or {})
         text = messages(args.language, args.messages)
-        artifacts = render_report(result, output, args.language, text, args.format)
+        comparison = None
+        if args.comparison_id:
+            from community_store import CommunityStore
+            from community_comparison import read_comparison
+            with CommunityStore(args.community_state_dir) as store:
+                comparison = read_comparison(store,args.comparison_id)
+        elif args.community_state_dir or args.community_messages:
+            raise ValueError("Community report options require --comparison-id")
+        artifacts = render_report(result, output, args.language, text, args.format, comparison, args.community_messages)
         print(json.dumps(artifacts, ensure_ascii=False))
-        return 0 if args.format == "html" or artifacts["pdf"] else 5
+        return 0 if args.format == "html" or (artifacts["pdf"] and (comparison is None or artifacts.get("comparison_pdf"))) else 5
     except (ValueError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 2

@@ -19,6 +19,7 @@ from reference_data import (
     load_reference_data,
     load_reference_cache,
     cache_reference_data,
+    apply_hardware_specs,
 )
 from system_io import (
     BenchError,
@@ -29,6 +30,7 @@ from system_io import (
     target_info,
     trash_owned,
     stop_process,
+    unsafe_path_component,
 )
 from workloads import (
     GIB,
@@ -53,7 +55,7 @@ def parser():
     p.add_argument(
         "--target",
         required=True,
-        help="Existing directory on a mounted external disk; never a raw device",
+        help="Explicit readable/writable directory on local mounted storage (internal or external); never a raw device",
     )
     p.add_argument(
         "--output",
@@ -138,7 +140,9 @@ def save(path, value):
 
 
 def select_engine(fio):
-    preferred = "posixaio" if platform.system() == "Darwin" else "libaio"
+    preferred = {"Darwin": "posixaio", "Linux": "libaio", "Windows": "windowsaio"}.get(platform.system())
+    if preferred is None:
+        raise BenchError("unsupported", "Unsupported operating system", 3)
     if preferred not in fio["engines"].split():
         raise BenchError(
             "unsupported", f"Required asynchronous engine unavailable: {preferred}", 3
@@ -148,11 +152,13 @@ def select_engine(fio):
 
 def check_owned(work, identity, file_identity=None):
     stat = work.lstat()
-    if work.is_symlink() or (stat.st_dev, stat.st_ino) != identity:
+    if unsafe_path_component(work) or (stat.st_dev, stat.st_ino) != identity:
         raise BenchError("unsafe_target", "Owned workspace changed")
     payload = work / "payload.bin"
     item = payload.lstat()
-    if payload.is_symlink() or not payload.is_file() or item.st_nlink != 1:
+    if platform.system() == "Windows" and (not stat.st_ino or not item.st_ino):
+        raise BenchError("unsafe_target", "Stable owned-file identity unavailable")
+    if unsafe_path_component(payload) or not payload.is_file() or item.st_nlink != 1:
         raise BenchError("unsafe_target", "Test payload is not an owned regular file")
     if file_identity and (item.st_dev, item.st_ino) != file_identity:
         raise BenchError("unsafe_target", "Test file identity changed")
@@ -197,7 +203,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             stdin=subprocess.DEVNULL,
             stdout=stderr,
             stderr=stderr,
-            start_new_session=True,
+            start_new_session=platform.system() != "Windows",
         )
         try:
             while proc.poll() is None:
@@ -247,6 +253,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                         if (
                             assessment["status"] == "observed_drop_stable"
                             and cache_stop_requested is None
+                            and platform.system() != "Windows"
                         ):
                             # SIGINT lets fio flush its final snapshot and bandwidth log.
                             cache_stop_requested = time.monotonic()
@@ -383,6 +390,7 @@ def execute(args, text, report_text):
         )
     elif cached:
         reference_data = cached
+    apply_hardware_specs(current_hardware, reference_data)
     if args.cache_estimate_file and args.profile != "cache":
         raise ValueError("--cache-estimate-file is only used with --profile cache")
     if args.profile == "cache":
@@ -456,6 +464,7 @@ def execute(args, text, report_text):
                     reference_cache=reference_cache,
                     plan=config,
                     fio=find_fio(),
+                    cleanup_policy="retain_owned_files" if args.keep_test_files or platform.system() == "Windows" else "system_trash",
                     language=args.language,
                     ui_language=args.ui_language,
                 ),
@@ -466,7 +475,7 @@ def execute(args, text, report_text):
         return 0
     output = Path(args.output).expanduser().absolute()
     # Must not follow existing output symlinks or overwrite previous evidence.
-    if output.exists() or any(x.is_symlink() for x in (output, *output.parents)):
+    if output.exists() or unsafe_path_component(output):
         raise BenchError(
             "unsafe_target", "Output must be a new path without symlink components"
         )
@@ -479,9 +488,12 @@ def execute(args, text, report_text):
         created=datetime.now(timezone.utc).isoformat(),
         target=target,
         environment=dict(
-            os=platform.platform(), architecture=platform.machine(), fio=None
+            os=platform.platform(), architecture=platform.machine(), fio=None,
+            os_family={"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system(), "unknown"),
+            os_version=platform.mac_ver()[0] if platform.system() == "Darwin" else platform.release()
         ),
-        plan=config,
+        plan={**config, "profile": args.profile},
+        tool=dict(version="unknown", method_version="drivespeed-file-v1"),
         cases=[],
         series=[],
         outcome="failed",
@@ -522,16 +534,19 @@ def execute(args, text, report_text):
             )
             progress.emit("dependency", "completed", 100, force=True)
             check_target(target, config["file_bytes"] + config["reserve_bytes"])
-            work = Path(target["path"]) / f".diskbench-{run_id}"
-            work.mkdir(mode=0o700)
+            candidate = Path(target["path"]) / f".diskbench-{run_id}"
+            candidate.mkdir(mode=0o700)
+            work = candidate
+            result["test_directory"] = str(work)
             fd = os.open(
                 work / "payload.bin",
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
                 0o600,
             )
-            os.ftruncate(fd, config["file_bytes"])
-            os.close(fd)
-            result["test_directory"] = str(work)
+            try:
+                os.ftruncate(fd, config["file_bytes"])
+            finally:
+                os.close(fd)
             for job in config["jobs"]:
                 progress.emit(job["name"], percent=0, force=True)
                 try:
@@ -583,7 +598,7 @@ def execute(args, text, report_text):
         finally:
             if work:
                 try:
-                    if args.keep_test_files:
+                    if args.keep_test_files or platform.system() == "Windows":
                         result["notes"].append("retain_note")
                     else:
                         trash_owned(work, target)

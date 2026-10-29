@@ -13,7 +13,9 @@ def load_reference_data(path):
 def validate_reference_data(data):
     if not isinstance(data, dict) or not isinstance(data.get("items"), list):
         raise ValueError("Reference JSON must contain an items list")
-    if data["items"] and (
+    if not isinstance(data.get("hardware_specs", []), list):
+        raise ValueError("Hardware specifications must be a list")
+    if (data["items"] or data.get("hardware_specs")) and (
         not isinstance(data.get("for_drive_model"), str)
         or not data["for_drive_model"].strip()
     ):
@@ -67,10 +69,73 @@ def validate_reference_data(data):
             raise ValueError(
                 "References require public HTTPS source URLs without credentials"
             )
+        bands = item.get("rating_bands")
+        comparison = item.get("comparison")
+        if bands is not None or comparison is not None:
+            if not isinstance(bands, dict) or not isinstance(comparison, dict):
+                raise ValueError("Ratings require both comparison conditions and source-backed bands")
+            cutoffs = bands.get("thresholds_mb_s")
+            upper = bands.get("upper_bound_mb_s")
+            if (item["metric"] not in ("seq_read", "seq_write", "rand_read", "rand_write", "post_cache_mb_s") or
+                not isinstance(cutoffs, list) or len(cutoffs) != 4 or
+                any(isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x) or x <= 0 for x in cutoffs) or
+                any(a >= b for a, b in zip(cutoffs, cutoffs[1:])) or
+                isinstance(upper, bool) or not isinstance(upper, (int, float)) or not math.isfinite(upper) or upper < cutoffs[-1] or
+                not isinstance(bands.get("rationale"), str) or not bands["rationale"].strip()):
+                raise ValueError("Five rating levels require four ascending MB/s thresholds, a range bound and derivation")
+            required = {"method_version", "os_family", "os_version", "engine", "filesystem", "capacity_bytes", "profile", "file_bytes",
+                        "rw", "bs", "qd", "numjobs", "direct", "runtime", "io_bytes", "models", "links", "phase", "free_percent_bucket"}
+            if set(comparison) != required:
+                raise ValueError("Rating comparison must specify the complete method and connection context")
+            for field in ("capacity_bytes", "file_bytes", "bs", "qd", "numjobs", "runtime", "io_bytes"):
+                if type(comparison[field]) is not int or comparison[field] <= 0:
+                    raise ValueError("Rating method counts must be positive integers")
+            if type(comparison["free_percent_bucket"]) is not int or not 0 <= comparison["free_percent_bucket"] <= 10 or comparison["direct"] is not True:
+                raise ValueError("Rating conditions require direct I/O and a valid free-space band")
+            for field in ("method_version", "os_family", "os_version", "engine", "filesystem", "profile", "rw", "phase"):
+                if not isinstance(comparison[field], str) or not comparison[field].strip():
+                    raise ValueError("Rating method labels must be explicit")
+            models = comparison["models"]
+            if (not isinstance(models, dict) or set(models) != {"computer", "drive", "enclosure", "controller"} or
+                any(value is not None and (not isinstance(value, str) or not value.strip()) for value in models.values())):
+                raise ValueError("Rating context stores only named hardware components")
+            if not isinstance(comparison["links"], list) or not comparison["links"]:
+                raise ValueError("Rating context requires explicit link conditions")
+            for link in comparison["links"]:
+                fields = {"kind", "gt_s", "lanes"} if isinstance(link, dict) and link.get("kind") == "pcie" else {"kind", "gbps"}
+                if (not isinstance(link, dict) or set(link) != fields or link.get("kind") not in ("pcie", "usb", "sata") or
+                    any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0
+                        for key, value in link.items() if key != "kind")):
+                    raise ValueError("Rating links require numeric speed and width without private metadata")
+            if set(bands) != {"thresholds_mb_s", "upper_bound_mb_s", "rationale"}:
+                raise ValueError("Unknown rating band fields")
+    for spec in data.get("hardware_specs", []):
+        if (not isinstance(spec, dict) or set(spec) - {"enclosure_model"} != {"component", "model", "interface", "source_url", "source_label", "conditions"} or
+            spec.get("component") not in ("computer", "drive", "enclosure", "controller") or
+            any(not isinstance(value, str) or not value.strip() for value in spec.values())):
+            raise ValueError("Hardware specifications require a confirmed model, interface, conditions and official source")
+        url = urlsplit(spec["source_url"])
+        if url.scheme != "https" or not url.hostname or url.username or url.password:
+            raise ValueError("Hardware specification sources require public HTTPS")
     missing = data.get("missing", [])
     if not isinstance(missing, list) or not all(isinstance(x, str) for x in missing):
         raise ValueError("Missing-reference notes must be a text list")
     return data
+
+
+def apply_hardware_specs(hardware, references):
+    """An exact branded enclosure's official specification can identify its bridge."""
+    if hardware.get('controller', {}).get('model'):
+        return
+    enclosure = hardware.get('enclosure', {}).get('model')
+    drive = hardware.get('drive', {}).get('model')
+    if not enclosure or not drive or references.get('for_drive_model') != drive:
+        return
+    matches = [spec for spec in references.get('hardware_specs', [])
+               if spec['component'] == 'controller' and spec.get('enclosure_model') == enclosure]
+    if len({spec['model'] for spec in matches}) == 1:
+        spec = matches[0]
+        hardware.setdefault('controller', {}).update(model=spec['model'], source='reference', source_url=spec['source_url'])
 
 
 def reference_cache_path(hardware, language=None):
@@ -79,7 +144,10 @@ def reference_cache_path(hardware, language=None):
     import os
 
     models = {
-        key: hardware.get(key, {}).get("model")
+        # A researched bridge is derived from the enclosure's reference packet.
+        # It cannot be needed to discover that very packet on the next run.
+        key: None if key == 'controller' and hardware.get(key, {}).get('source') == 'reference'
+        else hardware.get(key, {}).get("model")
         for key in ("drive", "computer", "enclosure", "controller")
     }
     key = hashlib.sha256(json.dumps(models, sort_keys=True).encode("utf-8")).hexdigest()
@@ -136,7 +204,7 @@ def cache_reference_data(data, hardware, language=None):
     data = validate_reference_data(data)
     path, models = reference_cache_path(hardware, language)
     if (
-        not data["items"]
+        not (data["items"] or data.get("hardware_specs"))
         or not models["drive"]
         or data.get("for_drive_model") != models["drive"]
     ):
@@ -147,7 +215,7 @@ def cache_reference_data(data, hardware, language=None):
         return dict(status="date_missing", from_cache=False)
     public = {
         key: data[key]
-        for key in ("for_drive_model", "checked_at", "items", "missing")
+        for key in ("for_drive_model", "checked_at", "items", "missing", "hardware_specs")
         if key in data
     }
     fields = {
@@ -162,6 +230,8 @@ def cache_reference_data(data, hardware, language=None):
         "conditions",
         "relationship",
         "approximate",
+        "comparison",
+        "rating_bands",
     }
     public["items"] = [
         {key: value for key, value in item.items() if key in fields}

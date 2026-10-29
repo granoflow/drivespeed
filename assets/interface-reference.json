@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "checked_at": "2026-10-29",
+  "purpose": "Known signal bounds for capacity utilisation; not guaranteed file throughput or quality thresholds",
+  "items": [
+    {
+      "kind": "pcie",
+      "generation": 1,
+      "gt_s": 2.5,
+      "encoding": 0.8,
+      "source_url": "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+    },
+    {
+      "kind": "pcie",
+      "generation": 2,
+      "gt_s": 5,
+      "encoding": 0.8,
+      "source_url": "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+    },
+    {
+      "kind": "pcie",
+      "generation": 3,
+      "gt_s": 8,
+      "encoding": 0.9846153846153847,
+      "source_url": "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+    },
+    {
+      "kind": "pcie",
+      "generation": 4,
+      "gt_s": 16,
+      "encoding": 0.9846153846153847,
+      "source_url": "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+    },
+    {
+      "kind": "pcie",
+      "generation": 5,
+      "gt_s": 32,
+      "encoding": 0.9846153846153847,
+      "source_url": "https://pcisig.com/sites/default/files/files/PCI-SIG-Seamless_Transition_to_PCIe_5.0_in_System_Implementations_FINAL.pdf"
+    },
+    {
+      "kind": "usb",
+      "gbps": 5,
+      "nominal_mb_s": 625,
+      "source_url": "https://www.usb.org/sites/default/files/usb_type-c_language_product_and_packaging_guidelines_20230320.pdf"
+    },
+    {
+      "kind": "usb",
+      "gbps": 10,
+      "nominal_mb_s": 1250,
+      "source_url": "https://www.usb.org/sites/default/files/usb_type-c_language_product_and_packaging_guidelines_20230320.pdf"
+    },
+    {
+      "kind": "usb",
+      "gbps": 20,
+      "nominal_mb_s": 2500,
+      "source_url": "https://www.usb.org/sites/default/files/usb_type-c_language_product_and_packaging_guidelines_20230320.pdf"
+    },
+    {
+      "kind": "usb",
+      "gbps": 40,
+      "nominal_mb_s": 5000,
+      "source_url": "https://www.usb.org/sites/default/files/usb_type-c_language_product_and_packaging_guidelines_20230320.pdf"
+    },
+    {
+      "kind": "usb",
+      "gbps": 80,
+      "nominal_mb_s": 10000,
+      "source_url": "https://www.usb.org/sites/default/files/usb_type-c_language_product_and_packaging_guidelines_20230320.pdf"
+    },
+    {
+      "kind": "sata",
+      "gbps": 6,
+      "encoded_mb_s": 600,
+      "source_url": "https://sata-io.org/sites/default/files/documents/SATA-Revision-3.0-FAQ-FINAL.pdf"
+    }
+  ],
+  "controllers": [
+    {
+      "model": "ASM2362",
+      "interface": "USB 10 Gbps ↔ PCIe 3.0 ×2",
+      "gbps": 10,
+      "source_url": "https://www.asmedia.com.tw/product/Ee1YQF9sX7yyajH5/C5cYq34qpByQ6jm6.html"
+    },
+    {
+      "model": "ASM2464PD",
+      "interface": "USB4 40 Gbps ↔ PCIe 4.0 ×4",
+      "gbps": 40,
+      "source_url": "https://www.asmedia.com.tw/product/802zX91Yw3tsFgm4/C64ZX59yu4sY1GW5.html"
+    }
+  ]
+}

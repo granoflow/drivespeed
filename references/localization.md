@@ -12,12 +12,14 @@
 
 ## DriveSpeed 品牌与推广语
 
-中文名称为“移动硬盘测速（DriveSpeed）”；英文及其他语言名称为 DriveSpeed，大小写保持不变。英文及其他语言的 `title` 保持 DriveSpeed，报告各章节仍按用户语言翻译。
+中文名称为“硬盘测速（DriveSpeed）”；英文及其他语言名称为 DriveSpeed，大小写保持不变。英文及其他语言的 `title` 保持 DriveSpeed，报告各章节仍按用户语言翻译。
 
-中文 `skill_intro`：你的移动硬盘几斤几两？现在就来测一下吧。
+中文 `skill_intro`：你的硬盘表现如何？现在就来测一下吧。
 
-英文 `skill_intro`：Wondering how quick your portable drive really is? Take it for one run and find out.
+英文 `skill_intro`：Find out how your drive performs. Test it with DriveSpeed.
 
-其他语言的 `skill_intro` 直接根据中文原意重新描述，以自然口语询问移动硬盘的实际表现并邀请测速，不经英文中转，不照字面翻译“几斤几两”，不加入速度、健康、耗时或安全保证。进度和技术说明照常完整翻译。
+其他语言的 `skill_intro` 直接根据中文原意重新描述，以自然口语询问硬盘的实际表现并邀请测速，不经英文中转，不照字面翻译“几斤几两”，不加入速度、健康、耗时或安全保证。进度和技术说明照常完整翻译。
 
 报告结尾的官网标签 `website_label` 与扩展推广语 `translation_promo` 必须随用户报告语言翻译。中文原文为“chrome翻译扩展，翻译你的pdf，免费，私密，快速。”；其他语言保留免费、私密、快速及翻译 PDF 的含义，不增加承诺。`https://anz.tv`、`https://translate.anz.tv` 两个网址不翻译；通过项目配置维护。
+
+社区提示另用 `assets/community/locales/en.json`；横评报告另用 `assets/community/report-locales/en.json`，均须完整翻译且保留占位符。它们是软件语言模板，可保存为 JSON；不包含用户投稿或评价缓存。

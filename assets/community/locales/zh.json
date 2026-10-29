@@ -1,0 +1,76 @@
+{
+  "share_notice": "只有你明确同意本次公开且报告通过审核后，报告与本人X链接才会展示。账号控制权和校验和不证明测量真实。",
+  "generic": {
+    "message": "社区操作未完成。",
+    "next_action": "先用list核对本地历史，再选择相应操作；不要删除状态或绕过同意。"
+  },
+  "arguments": {
+    "message": "命令参数不正确。",
+    "next_action": "查看对应子命令的--help，使用完整选项名称，每个选项只传一次。"
+  },
+  "input": {
+    "message": "所选报告或公开字段不符合要求。",
+    "next_action": "按错误字段核对保留的原始结果；不编造测量、不移除完整性声明、不自动重测。"
+  },
+  "input_access": {
+    "message": "所选结果不可读取或不是普通文件。",
+    "next_action": "明确指定保留的results.json；已有缓存可按ID使用preview查看，拒绝后续上传不依赖原文件。"
+  },
+  "parameters": {
+    "message": "缺少明确保存的历史测试参数。",
+    "next_action": "使用含有对应参数的原始结果，或保留本地报告；不用当前机器补造历史值，不擅自重测。"
+  },
+  "consent": {
+    "message": "这份准确报告没有当前明确的公开同意。",
+    "next_action": "先按ID运行preview，展示本人X链接和隐私说明并取得本次决定；只有明确同意后，才用返回的--notice-version及--decision publish调用consent。"
+  },
+  "integrity": {
+    "message": "冻结报告与记录的摘要不一致，已停止继续上传。",
+    "next_action": "保留缓存和原结果；此前请求可能已到达服务时先查回执。重新准备快照并取得明确同意，不要重写摘要。"
+  },
+  "not_found": {
+    "message": "没有找到这份本地报告。",
+    "next_action": "用list选择已有ID，或请用户指定保留结果；不要扫描全盘。"
+  },
+  "state": {
+    "message": "私有分享状态无法安全使用。",
+    "next_action": "保留现有文件，检查所有权、空间和并发操作；原操作结束后最多重试一次，并用list核对。必要时选择新的私有--state-dir，不覆盖无关数据库。"
+  },
+  "version": {
+    "message": "不支持这份快照或缓存版本。",
+    "next_action": "使用兼容版本，或从保留原结果重新准备并取得同意；不直接修改版本标签或摘要。"
+  },
+  "conflict": {
+    "message": "该ID已有不可覆写的冻结快照。",
+    "next_action": "按原ID使用preview；内容变化须新建快照并重新取得明确决定，不覆盖旧快照。"
+  },
+  "language": {
+    "message": "不支持指定的提示语言或语言文件。",
+    "next_action": "使用--ui-language en、zh、ar，或按assets/community/locales/en.json提供完整的--ui-messages语言包。"
+  },
+  "authorization_pending": "请打开验证链接，核对验证码并确认这份报告。命令最多等待10分钟；网页确认不等于报告已接收。",
+  "credentials": {
+    "message": "本机管理凭据缺失，或与当前服务不匹配。",
+    "next_action": "保留本地状态，选择原来的状态目录和服务；不要为已有报告ID补造凭据。"
+  },
+  "busy": {
+    "message": "另一项分享操作正在处理这份报告。",
+    "next_action": "等原操作结束后按同一报告ID重试，不要删除它的锁文件。"
+  },
+  "network": {
+    "message": "社区服务暂不可用，或响应未通过校验。",
+    "next_action": "保留原报告ID与本地状态，先查询接收回执再重试；遵守等待时间，不绕过TLS或改写测量值。"
+  },
+  "http": {
+    "message": "社区服务拒绝了这项操作。",
+    "next_action": "核对稳定错误码和原报告；再次投递前先查回执。账号受限时请私信X @slime5409申请解锁。"
+  },
+  "authorization": {
+    "message": "这份报告尚未完成授权。",
+    "next_action": "保留本地报告。拒绝不代表允许上传；重新授权前先取得用户明确的新决定。"
+  },
+  "samples": {
+    "message": "没有可用的参考样本快照。",
+    "next_action": "保留本地报告；用户明确愿意主动查询时再用receipt --refresh-similar。不要编造样本或自动重新测速。"
+  }
+}
