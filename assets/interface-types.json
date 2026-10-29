@@ -56,7 +56,8 @@
       ],
       "nominal_bps": 10000000000,
       "evidence_urls": [
-        "https://usb.org/usb-32-0"
+        "https://usb.org/usb-32-0",
+        "https://www.usb.org/usb-32"
       ]
     },
     {
