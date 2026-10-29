@@ -225,11 +225,11 @@ def plan(profile, file_bytes=None, write_budget=None, seconds=None, sustained=No
 
 
 def diagnostic_plan(profile, target, file_bytes=None, write_budget=None, seconds=30,
-                    duration=1800, fill_free_space=False):
+                    duration=1800):
     """Opt-in file-based diagnostics. Existing quick/full/cache defaults stay unchanged."""
     reserve = max(10 * GIB, int(target["total_bytes"] * 0.05))
     available = max(0, target["free_bytes"] - reserve - 64 * MIB) // MIB * MIB
-    size = available if fill_free_space else (file_bytes or (256 if profile == "mapping" else 64) * GIB)
+    size = file_bytes or (256 if profile == "mapping" else 64) * GIB
     if size < MIB or size % MIB or size > available:
         raise ValueError("Diagnostic file must fit available space after the safety reserve")
     if seconds <= 0 or duration <= 0 or (write_budget is not None and write_budget < size):
@@ -254,7 +254,7 @@ def diagnostic_plan(profile, target, file_bytes=None, write_budget=None, seconds
     return dict(profile=profile, file_bytes=size, write_budget=size, seconds=seconds,
                 sustained=duration, jobs=jobs, reserve_bytes=reserve,
                 max_write_bytes=size, max_runtime_seconds=sum(j["runtime"] + 45 for j in jobs),
-                fill_free_space=fill_free_space, available_bytes=available)
+                available_bytes=available)
 
 
 def add_recovery(config, idle_seconds):

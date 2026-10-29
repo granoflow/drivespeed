@@ -105,8 +105,6 @@ def parser():
         "--cache-estimate-file",
         help="Agent-researched cache planning JSON; see references/cache-planning.md",
     )
-    p.add_argument("--fill-free-space", action="store_true",
-                   help="Integrity profile only: use free space minus max(10 GiB, 5%% volume capacity)")
     p.add_argument("--recovery-seconds", type=int,
                    help="Cache profile only: idle this long, then run an additional bounded 8 GiB write")
     p.add_argument("--file-size", type=byte_size)
@@ -365,15 +363,12 @@ def execute(args, text, report_text):
         load_reference_data(args.reference_file) if args.reference_file else {}
     )
     target = target_info(args.target)
-    if args.fill_free_space and (args.profile != "integrity" or args.file_size is not None):
-        raise ValueError("--fill-free-space requires integrity and cannot be combined with --file-size")
     if args.recovery_seconds is not None and args.profile != "cache":
         raise ValueError("--recovery-seconds requires --profile cache")
     if args.profile in ("mapping", "integrity"):
         config = diagnostic_plan(args.profile, target, args.file_size, args.write_budget,
                                  args.seconds if args.seconds is not None else 30,
-                                 args.sustained_seconds if args.sustained_seconds is not None else 1800,
-                                 args.fill_free_space)
+                                 args.sustained_seconds if args.sustained_seconds is not None else 1800)
 
     current_hardware = collect_hardware(
         target,

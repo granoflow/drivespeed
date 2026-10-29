@@ -18,16 +18,50 @@ from report import render_diagnostics, render_report
 
 
 class DiagnosticTests(unittest.TestCase):
-    def test_fill_retains_reserve_and_requires_complete_readback(self):
-        config = diagnostic_plan('integrity', dict(total_bytes=200 * GIB, free_bytes=80 * GIB), fill_free_space=True)
-        self.assertLessEqual(config['file_bytes'] + config['reserve_bytes'], 80 * GIB)
-        self.assertEqual(config['max_write_bytes'], config['file_bytes'])
+    def test_finite_integrity_size_retains_reserve_and_requires_complete_readback(self):
+        target = dict(total_bytes=200 * GIB, free_bytes=80 * GIB)
+        config = diagnostic_plan('integrity', target, file_bytes=8 * GIB, write_budget=8 * GIB)
+        self.assertEqual(config['file_bytes'], 8 * GIB)
+        self.assertLessEqual(config['file_bytes'] + config['reserve_bytes'] + 64 * MIB, target['free_bytes'])
+        self.assertEqual(config['max_write_bytes'], 8 * GIB)
         self.assertTrue(all(j['require_complete'] for j in config['jobs']))
         self.assertEqual([j['rw'] for j in config['jobs']], ['write', 'read'])
         with self.assertRaises(ValueError):
-            diagnostic_plan('integrity', dict(total_bytes=200 * GIB, free_bytes=5 * GIB), fill_free_space=True)
+            diagnostic_plan('integrity', dict(total_bytes=200 * GIB, free_bytes=5 * GIB), file_bytes=8 * GIB)
         with self.assertRaises(ValueError):
-            diagnostic_plan('integrity', dict(total_bytes=200 * GIB, free_bytes=80 * GIB), write_budget=GIB)
+            diagnostic_plan('integrity', target, file_bytes=8 * GIB, write_budget=GIB)
+
+    def test_integrity_default_and_explicit_sizes_do_not_expand_with_free_space(self):
+        for free in (80 * GIB, 120 * GIB):
+            target = dict(total_bytes=200 * GIB, free_bytes=free)
+            self.assertEqual(diagnostic_plan('integrity', target)['file_bytes'], 64 * GIB)
+            self.assertEqual(diagnostic_plan('integrity', target, file_bytes=8 * GIB)['file_bytes'], 8 * GIB)
+
+    def test_unknown_cli_option_fails_before_target_access(self):
+        with contextlib.redirect_stderr(io.StringIO()) as error, \
+             patch.object(benchmark, 'target_info') as inspect, self.assertRaises(SystemExit) as caught:
+            benchmark.parser().parse_args(['--target', '/unused', '--profile', 'integrity', '--fill-free-space'])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn('unrecognized arguments', error.getvalue())
+        inspect.assert_not_called()
+
+    def test_finite_integrity_dry_run_preserves_requested_size_and_budget(self):
+        args = benchmark.parser().parse_args([
+            '--target', '/unused', '--profile', 'integrity', '--file-size', '8GiB',
+            '--write-budget', '8GiB', '--dry-run'])
+        with patch.object(benchmark, 'target_info', return_value=dict(total_bytes=200 * GIB, free_bytes=80 * GIB)), \
+             patch.object(benchmark, 'collect_hardware', return_value={}), \
+             patch.object(benchmark, 'load_reference_cache', return_value=({}, {})), \
+             patch.object(benchmark, 'find_fio', return_value=None), \
+             patch.object(benchmark, 'ensure_fio', side_effect=AssertionError('dry run cannot install fio')), \
+             patch.object(benchmark.subprocess, 'Popen', side_effect=AssertionError('dry run cannot run fio')), \
+             contextlib.redirect_stdout(io.StringIO()) as stdout:
+            self.assertEqual(benchmark.execute(args, messages('en'), messages('en')), 0)
+        config = json.loads(stdout.getvalue())['plan']
+        self.assertEqual(config['file_bytes'], 8 * GIB)
+        self.assertEqual(config['write_budget'], 8 * GIB)
+        self.assertEqual(config['max_write_bytes'], 8 * GIB)
+        self.assertEqual([job['io_bytes'] for job in config['jobs']], [8 * GIB, 8 * GIB])
 
     def test_mapping_repeats_sequence_and_never_reads_uninitialized_space(self):
         config = diagnostic_plan('mapping', dict(total_bytes=1000 * GIB, free_bytes=600 * GIB))

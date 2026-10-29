@@ -59,7 +59,7 @@ AI Agent 优先读取 `results.json` 的原始数值。读取 HTML 时可用 `#r
 
 ## 可选诊断入口
 
-`--profile mapping`、`--profile integrity`、`--fill-free-space` 与 `--recovery-seconds` 的流程、预算和结果解释见 [专项测试](diagnostics.md)。现有 quick/full 默认不变。
+`--profile mapping`、`--profile integrity --file-size ...` 与 `--recovery-seconds` 的流程、预算和结果解释见 [专项测试](diagnostics.md)。现有 quick/full 默认不变。
 
 ## 社区与成对报告
 

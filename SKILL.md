@@ -59,7 +59,7 @@ metadata:
 
 ## 可选专项
 
-需要比较随机访问范围与重复访问、测试持续写入后的空闲恢复，或尽量写满剩余空间并读回校验时，读取 [专项测试](references/diagnostics.md)。分别使用 `--profile mapping`、`--profile cache --recovery-seconds`、`--profile integrity --fill-free-space`；先预演并展示实际预算。高占用校验单独询问是否启用，默认关闭；不把逻辑区域校验通过称为没有物理坏块。
+需要比较随机访问范围与重复访问、测试持续写入后的空闲恢复，或对有限大小的专属文件进行完整读回校验时，读取 [专项测试](references/diagnostics.md)。分别使用 `--profile mapping`、`--profile cache --recovery-seconds`、`--profile integrity --file-size`；先预演并展示实际文件大小、写入预算和时限，再按用户授权执行。不把逻辑区域校验通过称为没有物理坏块。
 
 ## 每次重新识别硬件
 
@@ -93,7 +93,7 @@ python3 scripts/benchmark.py --target /path/to/selected-local-directory --profil
 
 开始后寻找连续降速，降速后先继续写入至少 30 秒，再取得完整 60 秒低速稳定窗口才主动结束。显示本次可用写缓存估算（GiB）与缓存后速度估算（MB/s）；数字只能描述本次空闲空间、温度、接口和先前负载条件，不能当作固定物理缓存容量。全程无明显降速、接口掩盖差异、速度仍波动、空间/写入/时间预算用尽或中断时，报告具体状态和实际写入量，不用 `—` 代替结论，也不无限续写或把尾速改名为缓存后速度。缓存专项未完成返回部分结果、退出码 6；真实错误/取消保留原有退出码。
 
-不自动擦除或全盘写满。温度不支持时不得编造；macOS 可读到的 NVMe SMART 温度会每约 5 秒采样。
+不自动擦除，所有写入受本次计划预算约束。温度不支持时不得编造；macOS 可读到的 NVMe SMART 温度会每约 5 秒采样。
 
 可只重生成报告而不测速、不安装 fio：
 
