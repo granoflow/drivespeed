@@ -302,12 +302,16 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             )
             if not objects:
                 raise ValueError("fio produced no JSON measurements")
-            if objects[-1]["jobs"][0].get("eta") != 0:
-                raise ValueError("fio final snapshot does not indicate completion")
             case["metrics"] = metrics(objects[-1])
             completed = sum(case["metrics"][d]["bytes"] for d in ("read", "write"))
             if not completed:
                 raise ValueError("fio completed zero I/O")
+            # fio's ETA is an estimate (sometimes INT_MAX even in its final
+            # successful JSON). Require the measured workload endpoint instead
+            # of treating ETA as a completion flag, including for early exits.
+            if (cache_stop_requested is None and completed < job["io_bytes"]
+                    and (case["metrics"].get("runtime_ms") or 0) < job["runtime"] * 1000):
+                raise ValueError("fio final snapshot has not reached the byte or runtime limit")
             if (job["name"] == "prepare" or job.get("require_complete")) and completed < job["io_bytes"]:
                 raise ValueError(
                     "Incomplete diagnostic coverage; refusing to claim a complete write/read verification"

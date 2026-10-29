@@ -350,12 +350,21 @@ def metrics(snapshot):
     if len(jobs) != 1 or jobs[0].get("error", 0):
         raise ValueError("Missing job or fio I/O error")
     job, result = jobs[0], {}
+    runtimes = [job.get("job_runtime"), *(job.get(d, {}).get("runtime") for d in ("read", "write"))]
+    if any(value is not None and (type(value) is not int or not 0 <= value <= 2**64 - 1) for value in runtimes):
+        raise ValueError("fio runtime counters must be nonnegative uint64 milliseconds")
     for direction in ("read", "write"):
         item = job.get(direction, {})
+        count = item.get("io_bytes") if "io_bytes" in item else item.get("io_kbytes", 0)
+        if type(count) is not int or not 0 <= count <= 2**64 - 1:
+            raise ValueError("fio byte counters must be nonnegative uint64 integers")
+        count *= 1 if "io_bytes" in item else 1024
+        if count > 2**64 - 1:
+            raise ValueError("fio byte counter overflow")
         latency = item.get("clat_ns", {})
         percentiles = latency.get("percentile", {})
         result[direction] = dict(
-            bytes=item.get("io_bytes", item.get("io_kbytes", 0) * 1024),
+            bytes=count,
             mb_s=item.get("bw_bytes", item.get("bw", 0) * 1024) / 1_000_000,
             iops=item.get("iops", 0),
             latency_us={
@@ -366,9 +375,7 @@ def metrics(snapshot):
             },
         )
     result["achieved_depth"] = job.get("iodepth_level", {})
-    result["runtime_ms"] = job.get("job_runtime") or max(
-        job.get("read", {}).get("runtime", 0), job.get("write", {}).get("runtime", 0)
-    )
+    result["runtime_ms"] = runtimes[0] or max(value or 0 for value in runtimes[1:])
     return result
 
 

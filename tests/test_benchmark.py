@@ -103,6 +103,19 @@ class WorkloadTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             metrics({"jobs": [{"error": 5}]})
 
+    def test_fio_byte_and_runtime_counters_reject_nonfinite_or_invalid_values(self):
+        for field in ("io_bytes", "io_kbytes", "runtime", "job_runtime"):
+            for value in (float("inf"), float("nan"), -1, True, "1000", 2**64):
+                with self.subTest(field=field, value=value):
+                    snapshot = fixture_snapshot()
+                    job = snapshot["jobs"][0]
+                    target = job if field == "job_runtime" else job["write"]
+                    if field == "io_kbytes":
+                        target.pop("io_bytes", None)
+                    target[field] = value
+                    with self.assertRaises(ValueError):
+                        metrics(snapshot)
+
     def test_drop_numbers_never_prove_cache_exhaustion(self):
         points = [
             dict(seconds=i, mb_s=1000 if i <= 10 else 200, direction="write")
@@ -948,6 +961,66 @@ class ExecutionTests(unittest.TestCase):
             self.assertEqual(case["status"], "failed" if short else "completed")
             self.assertEqual(case["metrics_complete"], not short)
             self.assertTrue((output / "prepare.case.json").exists())
+
+    def test_unknown_eta_does_not_reject_completed_byte_or_time_budget(self):
+        for completed, runtime, direction_runtime in ((MIB, 1000, 1000), (MIB // 2, 10000, 1000), (MIB // 2, 0, 10000)):
+            with self.subTest(completed=completed, runtime=runtime, direction_runtime=direction_runtime):
+                work, output, script, target, config, job = self.setup_case()
+                job["name"] = "seq_write"
+                body = script.read_text().replace("count=int(a['io_size'])", f"count={completed}")
+                body = body.replace("'eta':0", "'eta':2147483647").replace("'job_runtime':1000", f"'job_runtime':{runtime}")
+                body = body.replace("'runtime':1000", f"'runtime':{direction_runtime}")
+                script.write_text(body)
+                with contextlib.redirect_stderr(io.StringIO()), patch.object(benchmark, "check_target", return_value={}):
+                    case = benchmark.run_case({"path": str(script)}, job, config, "posixaio", output, work, target,
+                                              Progress(["seq_write"], messages("en")))
+                self.assertEqual(case["status"], "completed", case.get("detail"))
+                self.assertTrue(case["metrics_complete"])
+
+    def test_clean_early_exit_with_incomplete_snapshot_is_not_a_complete_measurement(self):
+        for eta in (0, 2147483647):
+            with self.subTest(eta=eta):
+                work, output, script, target, config, job = self.setup_case(short=True)
+                job["name"] = "seq_write"
+                script.write_text(script.read_text().replace("'eta':0", f"'eta':{eta}"))
+                with contextlib.redirect_stderr(io.StringIO()), patch.object(benchmark, "check_target", return_value={}):
+                    case = benchmark.run_case({"path": str(script)}, job, config, "posixaio", output, work, target,
+                                              Progress(["seq_write"], messages("en")))
+                self.assertEqual(case["status"], "failed")
+                self.assertFalse(case["metrics_complete"])
+                self.assertIn("byte or runtime limit", case["detail"])
+
+    def test_time_limit_does_not_override_required_byte_coverage(self):
+        for name in ("prepare", "verify_read"):
+            with self.subTest(name=name):
+                work, output, script, target, config, job = self.setup_case(short=True)
+                job.update(name=name, require_complete=True)
+                script.write_text(script.read_text().replace("'job_runtime':1000", "'job_runtime':10000"))
+                with contextlib.redirect_stderr(io.StringIO()), patch.object(benchmark, "check_target", return_value={}):
+                    case = benchmark.run_case({"path": str(script)}, job, config, "posixaio", output, work, target,
+                                              Progress([name], messages("en")))
+                self.assertEqual(case["status"], "failed")
+                self.assertIn("Incomplete diagnostic coverage", case["detail"])
+
+    def test_invalid_or_failed_final_producer_cannot_mark_measurement_complete(self):
+        for failure in ("zero", "io_error", "nonzero_exit", "truncated"):
+            with self.subTest(failure=failure):
+                work, output, script, target, config, job = self.setup_case()
+                body = script.read_text()
+                if failure == "zero":
+                    body = body.replace("count=int(a['io_size'])", "count=0")
+                elif failure == "io_error":
+                    body = body.replace("'error':0", "'error':5")
+                elif failure == "nonzero_exit":
+                    body += "raise SystemExit(2)\n"
+                else:
+                    body += "with Path(a['output']).open('a') as stream: stream.write('{')\n"
+                script.write_text(body)
+                with contextlib.redirect_stderr(io.StringIO()), patch.object(benchmark, "check_target", return_value={}):
+                    case = benchmark.run_case({"path": str(script)}, job, config, "posixaio", output, work, target,
+                                              Progress(["prepare"], messages("en")))
+                self.assertEqual(case["status"], "failed")
+                self.assertFalse(case["metrics_complete"])
 
     def test_cache_runner_stops_after_stable_drop_and_keeps_final_fio_output(self):
         work, output, script, target, config, job = self.setup_case()
