@@ -256,9 +256,11 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                                     )
                                 )
                             last_elapsed, last_write_bytes = observed_seconds, written
-                        assessment = cache_assessment(cache_points)
+                        timing = collection_status(dict(rw="write", metrics=observed, series=cache_points)) if config.get("method_version") == "drivespeed-auto-full-v1" else None
+                        assessment = cache_assessment(cache_points, sampling_status=timing)
                         if (
                             assessment["status"] == "observed_drop_stable"
+                            and timing in (None, "collected")
                             and written >= job.get("initialize_bytes", 0)
                             and cache_stop_requested is None
                             and platform.system() != "Windows"
@@ -603,8 +605,11 @@ def execute(args, text, report_text):
             sustained = next(
                 (c for c in result["cases"] if c["name"] == "sustained"), {}
             )
-            result["sustained_summary"] = sustained_summary(sustained.get("series", []))
-            result["cache_assessment"] = cache_assessment(sustained.get("series", []))
+            if any(c.get("collection_status") == "collected_irregular" for c in result["cases"]):
+                result["notes"].append("sampling_irregular")
+            timing = collection_status(sustained) if config.get("method_version") == "drivespeed-auto-full-v1" else None
+            result["sustained_summary"] = sustained_summary(sustained.get("series", []), sampling_status=timing)
+            result["cache_assessment"] = cache_assessment(sustained.get("series", []), sampling_status=timing)
             result["cache_assessment"]["stop_reason"] = sustained.get(
                 "stop_reason", "bounded_test"
             )

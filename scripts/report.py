@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from progress import ASSETS, language_default, messages
-from workloads import sustained_summary, cache_assessment, job_label
+from workloads import sustained_summary, cache_assessment, job_label, collection_status
 from performance_rating import interface_catalog, link_reference, component_summary
 from reference_data import (
     load_reference_data,
@@ -249,7 +249,8 @@ def render_peak_comparison(result, text):
         samples = [p["mb_s"] for p in case.get("series", [])
                    if p.get("direction") == direction and isinstance(p.get("mb_s"), (int, float))
                    and math.isfinite(p["mb_s"]) and p["mb_s"] >= 0]
-        peak = max(samples) if samples else None
+        timing_ok = result.get("tool", {}).get("method_version") != "drivespeed-auto-full-v1" or collection_status(case) == "collected"
+        peak = max(samples) if samples and timing_ok else None
         average = case.get("metrics", {}).get(direction, {}).get("mb_s")
         cap = host.get(direction + "_mb_s")
         relation = text["reference_not_measured"]
@@ -780,9 +781,11 @@ def render_report(result, output, language, text, requested_format="html", compa
     )
     hardware_html += "</section>"
     sustained_case = next((c for c in cases if c["name"] == "sustained"), {})
-    assessment = result.get("cache_assessment") or cache_assessment(
-        sustained_case.get("series", [])
-    )
+    automatic = result.get("tool", {}).get("method_version") == "drivespeed-auto-full-v1"
+    timing = collection_status(sustained_case) if automatic else None
+    limited_windows = timing not in (None, "collected")
+    assessment = (cache_assessment(sustained_case.get("series", []), sampling_status=timing)
+                  if limited_windows else result.get("cache_assessment") or cache_assessment(sustained_case.get("series", [])))
     cards = []
     for name, direction in [
         ("seq_read", "read"),
@@ -795,7 +798,8 @@ def render_report(result, output, language, text, requested_format="html", compa
         if value is not None:
             cards.append(card(text[name], number(value), name))
     short_cards, cards = cards, []
-    summary = result.get("sustained_summary") or sustained_summary([])
+    summary = (sustained_summary(sustained_case.get("series", []), sampling_status=timing)
+               if limited_windows else result.get("sustained_summary") or sustained_summary([]))
     summary_labels = [
         ("initial_mb_s", "initial"),
         ("tail_mean_mb_s", "tail_mean"),
@@ -1057,7 +1061,7 @@ def render_report(result, output, language, text, requested_format="html", compa
         + "</tbody></table>"
     )
     # File lifecycle and execution notices belong in the delivery conversation.
-    delivery_only = {"trash_note", "retain_note", "cleanup_failed", "cache_incomplete"}
+    delivery_only = {"trash_note", "retain_note", "cleanup_failed", "cache_incomplete", "sampling_irregular"}
     notes = [
         text.get(key, text["unknown"])
         for key in result.get("notes", []) if key not in delivery_only
@@ -1079,6 +1083,10 @@ def render_report(result, output, language, text, requested_format="html", compa
         if result.get("synthetic")
         else ""
     )
+    irregular_cases = [text.get(c.get("name"), c.get("name", "")) for c in cases
+                       if automatic and collection_status(c) == "collected_irregular"]
+    sampling_notice = ('<p class="notice" data-sampling="collected_irregular">'
+                       + esc(text["sampling_irregular"]) + " · " + esc(" / ".join(irregular_cases)) + "</p>") if irregular_cases else ""
     series = next((c.get("series", []) for c in cases if c["name"] == "sustained"), [])
     direction = "rtl" if language.split("-")[0] in ("ar", "he", "fa", "ur") else "ltr"
     css = (ASSETS / "report.css").read_text(encoding="utf-8")
@@ -1102,6 +1110,7 @@ def render_report(result, output, language, text, requested_format="html", compa
     document = f'''<!doctype html>
 <html lang="{esc(language)}" dir="{direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{esc(text["title"])}</title><style>{css}</style></head><body><main>
 <header><div><h1>{esc(text["title"])}</h1><p>{esc(object_line)}</p><p class="run-meta"><time datetime="{esc(created)}">{esc(created_display)}</time><span>{esc(status)} · {len(completed)}/{len(cases)}</span></p></div><button type="button" title="{esc(text["print_hint"])}" onclick="window.print()">{esc(text["download"])}</button></header>
+{sampling_notice}
 {sample}
 {('<p class="notice">' + esc(text['core_incomplete']) + '</p>') if result.get('completeness', {}).get('complete') is False else ''}
 {('<h2 class="group-title">' + esc(text["short_group"]) + '</h2><p class="group-caption">' + esc(text["short_group_note"]) + '</p><dl class="cards short-cards">' + "".join(short_cards) + '</dl>') if short_cards else ''}

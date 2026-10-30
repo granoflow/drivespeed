@@ -345,7 +345,7 @@ def project_result(result, profile_url, intro="", submission_id=None):
         _fail("tool.method_version", "missing_parameters")
     automatic = method == "drivespeed-auto-full-v1"
     if automatic:
-        from workloads import core_completeness
+        from workloads import core_completeness, collection_status
         try:
             complete = core_completeness(result)
         except (TypeError, KeyError, AttributeError, OverflowError):
@@ -400,8 +400,9 @@ def project_result(result, profile_url, intro="", submission_id=None):
             assessed = result.get("cache_assessment", {})
             if not isinstance(assessed, dict):
                 _fail("cache_assessment")
-            observed = assessed.get("status") == "observed_drop_stable" and local.get("status") == "completed"
-            cache = {"status": "observed" if observed else "not_observed" if assessed.get("status") == "no_drop_observed" else "incomplete",
+            timing_ok = not automatic or collection_status(local) == "collected"
+            observed = assessed.get("status") == "observed_drop_stable" and local.get("status") == "completed" and timing_ok
+            cache = {"status": "observed" if observed else "incomplete" if not timing_ok else "not_observed" if assessed.get("status") == "no_drop_observed" else "incomplete",
                      "capacity_estimate_bytes": assessed.get("cache_capacity_estimate_bytes") if observed else None,
                      "post_cache_mb_s": _number(assessed.get("post_cache_mb_s"), field + ".cache") if observed else None, "cause_confirmed": False}
         cases.append({"name": local.get("name"), "rw": local.get("rw"), "bs_bytes": numeric["bs"], "qd": numeric["qd"],

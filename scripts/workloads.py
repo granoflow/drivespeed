@@ -476,7 +476,7 @@ def active_runtime_ms(data, rw):
 
 
 def collection_status(case):
-    """Do not confuse a legal subsecond byte endpoint with missing collection."""
+    """Separate broken collection from valid logs with limited time resolution."""
     data = case.get("metrics", {})
     if not isinstance(data, dict):
         return "collection_incomplete"
@@ -493,13 +493,19 @@ def collection_status(case):
         not isinstance(p, dict) or p.get("direction") not in active for p in series
     ):
         return "collection_incomplete"
-    # fio averages each 1000 ms; its final byte endpoint need not complete
-    # another timer interval. Reuse the 50 ms boundary tolerance for each
-    # observed interval, while rejecting holes inside the collected series.
+    # Nominal cadence is a resolution description, not a fio timer deadline.
+    # See fio-3.43 stat.c add_log_sample/__add_samples: actual elapsed time is
+    # recorded and delayed samples can still contain accumulated I/O.
     interval_seconds, timer_tolerance = 1.0, .05
     max_interval = interval_seconds + timer_tolerance
     # Only float roundoff, far below fio's millisecond timestamp precision.
     comparison_epsilon = 1e-9
+    elapsed = case.get("elapsed_seconds")
+    if "elapsed_seconds" in case and (
+        type(elapsed) not in (int, float) or not math.isfinite(elapsed) or elapsed <= 0
+    ):
+        return "collection_incomplete"
+    irregular = False
     durations = []
     for direction in active:
         if not isinstance(data.get(direction), dict):
@@ -515,16 +521,25 @@ def collection_status(case):
             return "collection_incomplete"
         if any(type(p.get("mb_s")) not in (int, float) or not math.isfinite(p["mb_s"]) or p["mb_s"] < 0 for p in points):
             return "collection_incomplete"
-        if times and times[-1] > direction_seconds + timer_tolerance + comparison_epsilon:
+        # The wrapper starts before fio's epoch and ends after the child exits.
+        # Its rounded monotonic duration provides an outer execution envelope.
+        if elapsed is not None and direction_seconds > elapsed + .001 + comparison_epsilon:
+            return "collection_incomplete"
+        upper = elapsed + .001 if elapsed is not None else direction_seconds + timer_tolerance
+        if times and times[-1] > upper + comparison_epsilon:
             return "collection_incomplete"
         if not times:
             if direction_seconds > max_interval + comparison_epsilon:
                 return "collection_incomplete"
             continue
         if times[0] > max_interval + comparison_epsilon or direction_seconds - times[-1] > max_interval + comparison_epsilon:
+            irregular = True
+        if any(b <= a for a, b in zip(times, times[1:])):
             return "collection_incomplete"
-        if any(not 0 < b - a <= max_interval + comparison_epsilon for a, b in zip(times, times[1:])):
-            return "collection_incomplete"
+        if any(b - a > max_interval + comparison_epsilon for a, b in zip(times, times[1:])):
+            irregular = True
+    if irregular:
+        return "collected_irregular"
     return "short_window" if max(durations) < interval_seconds or not series else "collected"
 
 
@@ -570,7 +585,8 @@ def case_core_missing(case, job, config):
             missing.append("sustained.initialization")
         if written < job["io_bytes"] and not (
             case.get("stop_reason") == "post_drop_stable"
-            and cache_assessment(case.get("series", []))["status"] == "observed_drop_stable"
+            and cache_assessment(case.get("series", []), sampling_status=collection_status(case)
+                                 if config.get("method_version") == "drivespeed-auto-full-v1" else None)["status"] == "observed_drop_stable"
         ):
             missing.append("sustained.endpoint")
     transferred = sum(data.get(d, {}).get("bytes", 0) for d in ("read", "write")
@@ -600,7 +616,7 @@ def core_completeness(result):
     return dict(complete=not missing, missing_core=sorted(missing))
 
 
-def sustained_summary(points):
+def sustained_summary(points, sampling_status=None):
     """Transparent descriptive statistics, never claim SLC exhaustion from bandwidth alone."""
     samples = sorted(
         (p for p in points if p["direction"] == "write"), key=lambda x: x["seconds"]
@@ -619,6 +635,12 @@ def sustained_summary(points):
         covered_seconds=None,
     )
     if not samples:
+        return out
+    if sampling_status not in (None, "collected"):
+        out["sampling_gaps"] = True
+        end = samples[-1].get("seconds")
+        if type(end) in (int, float) and math.isfinite(end) and end >= 0:
+            out["covered_seconds"] = end
         return out
     end = samples[-1]["seconds"]
     out["covered_seconds"] = end
@@ -678,7 +700,7 @@ def sustained_summary(points):
     return out
 
 
-def cache_assessment(points):
+def cache_assessment(points, sampling_status=None):
     """Infer an available write-cache boundary only after a sustained lower plateau.
 
     Bandwidth alone cannot prove the cause; the estimate describes this run, not
@@ -694,6 +716,10 @@ def cache_assessment(points):
         stable_window_seconds=60,
         cause_confirmed=False,
     )
+    if sampling_status not in (None, "collected"):
+        if sampling_status != "short_window":
+            out["status"] = "sampling_gaps"
+        return out
     samples = sorted(
         (p for p in points if p.get("direction") == "write"), key=lambda p: p["seconds"]
     )

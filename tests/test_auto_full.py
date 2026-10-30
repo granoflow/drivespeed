@@ -147,19 +147,22 @@ class EvidenceTests(unittest.TestCase):
         case["series"] = [dict(seconds=i*1.04, mb_s=100, direction="write") for i in range(1,97)]
         self.assertEqual(collection_status(case), "collected")
         case["series"].pop(48)
-        self.assertEqual(collection_status(case), "collection_incomplete")
+        self.assertEqual(collection_status(case), "collected_irregular")
         for runtime, expected in ((999,"short_window"),(1000,"short_window"),(1004,"short_window"),(1050,"short_window"),(1051,"collection_incomplete")):
             case["metrics"]["runtime_ms"] = runtime
             case["metrics"]["write"]["runtime_ms"] = runtime
             case["series"] = []
             self.assertEqual(collection_status(case), expected)
 
-    def test_timer_boundary_still_rejects_internal_holes_and_bad_samples(self):
+    def test_irregular_resolution_is_separate_from_broken_samples(self):
         base = complete_result()["cases"][0]
         base["metrics"]["runtime_ms"] = 4000
         base["metrics"]["write"]["runtime_ms"] = 4000
-        for times in ((2.010,3.019),(1.005,3.019),(1.005,2.010),(),
-                      (1,2,4),(1,2,2,3),(3,2,1),(1,2,4.051)):
+        for times in ((2.010,3.019),(1.005,3.019),(1.005,2.010),(1,2,4)):
+            case = copy.deepcopy(base)
+            case["series"] = [dict(seconds=t, mb_s=100, direction="write") for t in times]
+            self.assertEqual(collection_status(case), "collected_irregular", times)
+        for times in ((),(1,2,2,3),(3,2,1),(1,2,4.051)):
             case = copy.deepcopy(base)
             case["series"] = [dict(seconds=t, mb_s=100, direction="write") for t in times]
             self.assertEqual(collection_status(case), "collection_incomplete", times)
@@ -176,14 +179,14 @@ class EvidenceTests(unittest.TestCase):
         case["series"].append(dict(seconds=1,mb_s=100,direction="read"))
         self.assertEqual(collection_status(case), "collection_incomplete")
 
-    def test_log_millisecond_boundaries_do_not_expand_timer_tolerance(self):
+    def test_log_millisecond_boundaries_only_describe_resolution(self):
         for runtime,times,expected in (
             (4200,[1.05,2.10,3.15,4.20],"collected"),
-            (4201,[1.05,2.10,3.151,4.201],"collection_incomplete"),
+            (4201,[1.05,2.10,3.151,4.201],"collected_irregular"),
             (2000,[1.05,2.0],"collected"),
-            (2000,[1.051,2.0],"collection_incomplete"),
+            (2000,[1.051,2.0],"collected_irregular"),
             (4200,[1.05,2.10,3.15],"collected"),
-            (4201,[1.05,2.10,3.15],"collection_incomplete"),
+            (4201,[1.05,2.10,3.15],"collected_irregular"),
             (2000,[1.0,2.05],"collected"),
             (2000,[1.001,2.051],"collection_incomplete"),
         ):
@@ -192,6 +195,51 @@ class EvidenceTests(unittest.TestCase):
             case["metrics"]["write"]["runtime_ms"] = runtime
             case["series"] = [dict(seconds=t,mb_s=100,direction="write") for t in times]
             self.assertEqual(collection_status(case),expected,(runtime,times))
+
+    def test_actual_timer_delay_and_wrapper_envelope(self):
+        case = complete_result()["cases"][0]
+        case["metrics"]["runtime_ms"] = 30000
+        case["metrics"]["write"]["runtime_ms"] = 30001
+        case["elapsed_seconds"] = 31.021
+        times = [1.001,2.005,3.006,4.008,5.009,6.089] + [6.089+(i-6)*1.01 for i in range(7,30)]
+        case["series"] = [dict(seconds=t,mb_s=100,direction="write") for t in times]
+        original = copy.deepcopy(case)
+        self.assertEqual(collection_status(case),"collected_irregular")
+        self.assertEqual(case,original)
+        case["series"][-1]["seconds"] = 31.023
+        self.assertEqual(collection_status(case),"collection_incomplete")
+        for invalid in (None,False,0,-1,math.nan,math.inf,2):
+            case = copy.deepcopy(original)
+            case["elapsed_seconds"] = invalid
+            self.assertEqual(collection_status(case),"collection_incomplete")
+
+    def test_irregular_windows_never_produce_fixed_window_or_cache_numbers(self):
+        from workloads import sustained_summary,cache_assessment
+        points = [dict(seconds=i,mb_s=1000 if i<=8 else 300,direction="write") for i in range(1,121)]
+        self.assertEqual(cache_assessment(points)["status"],"observed_drop_stable")
+        cache = cache_assessment(points,sampling_status="collected_irregular")
+        self.assertEqual(cache["status"],"sampling_gaps")
+        self.assertIsNone(cache["cache_capacity_estimate_bytes"])
+        self.assertIsNone(cache["post_cache_mb_s"])
+        summary = sustained_summary(points,sampling_status="collected_irregular")
+        for key in ("initial_mb_s","tail_mean_mb_s","minimum_5s_mb_s","drop_percent","bytes_at_change","after_drop_mean_mb_s"):
+            self.assertIsNone(summary[key],key)
+        self.assertEqual(len(points),120)
+
+    def test_irregular_final_curve_cannot_justify_cache_early_endpoint(self):
+        result = complete_result(64*GIB)
+        case,job = result["cases"][0],result["plan"]["jobs"][0]
+        case["metrics"]["runtime_ms"] = 120000
+        case["metrics"]["write"]["runtime_ms"] = 120000
+        case["metrics"]["write"]["bytes"] = 40*GIB
+        case["elapsed_seconds"] = 121
+        case["stop_reason"] = "post_drop_stable"
+        case["series"] = [dict(seconds=i,mb_s=1000 if i<=8 else 300,direction="write") for i in range(1,121)]
+        self.assertLess(case["metrics"]["write"]["bytes"],job["io_bytes"])
+        self.assertEqual(case_core_missing(case,job,result["plan"]),[])
+        case["series"][5]["seconds"] += .08
+        self.assertEqual(collection_status(case),"collected_irregular")
+        self.assertIn("sustained.endpoint",case_core_missing(case,job,result["plan"]))
 
     def test_active_mean_percentile_zero_nan_and_mixed_missing_are_partial(self):
         for field in ("mean", "50", "95", "99"):
@@ -299,6 +347,53 @@ class AuthorizationTests(unittest.TestCase):
 
 
 class EntryAndQualityTests(unittest.TestCase):
+    def test_irregular_collection_does_not_skip_later_healthy_workloads(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            target = AuthorizationTests().target()
+            target["path"] = str(root/"target")
+            Path(target["path"]).mkdir()
+            ledger = WriteAllowance(root/"state")
+            ledger.import_existing(target,16*GIB,0,16*GIB,"fixture-only permission")
+            output = root/"output"
+            args = benchmark.parser().parse_args(["--target",target["path"],"--output",str(output),"--language","en"])
+            fixtures = {c["name"]:c for c in complete_result()["cases"]}
+            def produced(fio,job,*unused):
+                case = copy.deepcopy(fixtures[job["name"]])
+                if job["name"]=="rand_read":
+                    case["metrics"]["runtime_ms"] = 3000
+                    case["metrics"]["read"]["runtime_ms"] = 3000
+                    case["elapsed_seconds"] = 3.5
+                    case["series"] = [dict(seconds=t,mb_s=100,direction="read") for t in (1.001,2.081,3.0)]
+                case["collection_status"] = collection_status(case)
+                case["metrics_complete"] = True
+                return case
+            with patch.object(benchmark,"WriteAllowance",return_value=ledger), \
+                 patch.object(benchmark,"target_info",return_value=target), \
+                 patch.object(benchmark,"check_target",return_value=target), \
+                 patch.object(benchmark,"collect_hardware",return_value={}), \
+                 patch.object(benchmark,"load_reference_cache",return_value=({},{})), \
+                 patch.object(benchmark,"apply_hardware_specs"), \
+                 patch.object(benchmark,"DeviceLock",return_value=contextlib.nullcontext()), \
+                 patch.object(benchmark,"ensure_fio",return_value={"path":"fixture-never-launched","engines":"posixaio"}), \
+                 patch.object(benchmark,"select_engine",return_value="posixaio"), \
+                 patch.object(benchmark,"observe_quality",return_value={"status":"quiet_observed"}), \
+                 patch.object(benchmark,"confirm_write",side_effect=lambda target,config,allowance,text:plan_hash(target,config,allowance)), \
+                 patch.object(benchmark.os,"ftruncate"), \
+                 patch.object(benchmark,"run_case",side_effect=produced) as producer, \
+                 patch.object(benchmark,"trash_owned"), \
+                 patch("report.render_report",return_value={"html":"fixture.html","pdf":None}), \
+                 contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(io.StringIO()):
+                code = benchmark.execute(args,messages("en"),messages("en"))
+            self.assertEqual(code,0)
+            self.assertEqual(producer.call_count,11)
+            result = json.loads((output/"results.json").read_text())
+            self.assertTrue(result["completeness"]["complete"])
+            self.assertEqual(result["outcome"],"complete")
+            self.assertEqual(result["cases"][6]["collection_status"],"collected_irregular")
+            self.assertTrue(all(c["status"]=="completed" for c in result["cases"]))
+            self.assertIn("sampling_irregular",result["notes"])
+
     def test_removed_measurement_flags_reject_before_target_access(self):
         for flag, value in (("--profile", "full"), ("--file-size", "8GiB"),
                             ("--write-budget", "16GiB"), ("--seconds", "30"),
@@ -402,6 +497,39 @@ def community_result(status="quiet_observed"):
 
 
 class CommunityContractTests(unittest.TestCase):
+    def test_irregular_final_projection_and_report_suppress_stale_window_claims(self):
+        from workloads import cache_assessment,sustained_summary
+        from report import render_report
+        result = community_result()
+        result.pop("user_input",None)  # This fixture tests sampling, not locale-bound dialogue.
+        case = result["cases"][0]
+        case["metrics"]["runtime_ms"] = 120000
+        case["metrics"]["write"]["runtime_ms"] = 120000
+        case["elapsed_seconds"] = 121
+        case["series"] = [dict(seconds=i+.08 if i==6 else i,mb_s=1000 if i<=8 else 300,direction="write") for i in range(1,121)]
+        case["collection_status"] = "collected"  # A stale flag is not qualification.
+        result["cache_assessment"] = cache_assessment(case["series"])
+        self.assertEqual(result["cache_assessment"]["status"],"observed_drop_stable")
+        result["sustained_summary"] = sustained_summary(case["series"])
+        result["sustained_summary"]["tail_mean_mb_s"] = 9191919
+        original = copy.deepcopy(result)
+        payload = community_data.project_result(result,"https://x.com/fixture_user")
+        self.assertEqual(payload["quality"],{"status":"quiet_observed"})
+        self.assertEqual(payload["cases"][0]["write"]["latency_us"]["mean"],12.34)
+        self.assertEqual(payload["cases"][0]["cache"]["status"],"incomplete")
+        self.assertIsNone(payload["cases"][0]["cache"]["capacity_estimate_bytes"])
+        self.assertIsNone(payload["cases"][0]["cache"]["post_cache_mb_s"])
+        with tempfile.TemporaryDirectory() as directory:
+            paths = render_report(result,directory,"en",messages("en"))
+            html = Path(paths["html"]).read_text()
+        self.assertEqual(html.count(messages("en")["sampling_irregular"]),1)
+        self.assertIn('data-sampling="collected_irregular"',html)
+        self.assertIn("12.34",html)
+        self.assertNotIn('data-metric="cache_capacity_estimate_bytes"',html)
+        self.assertNotIn('data-metric="post_cache_mb_s"',html)
+        self.assertNotIn("9,191,919",html)
+        self.assertEqual(result,original)
+
     def test_mean_and_quality_roundtrip_and_legacy_absence(self):
         from test_community import local_result, ID
         legacy = community_data.project_result(local_result(), "https://x.com/fixture_user", submission_id=ID)
