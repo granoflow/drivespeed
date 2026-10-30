@@ -230,7 +230,6 @@ html[dir="rtl"] .cache-reference, html[dir="rtl"] .card .notice { direction: rtl
   body:not(.community-report) .cards { margin-bottom: 12px; }
   body:not(.community-report) .metric-guide { gap: 12px 24px; margin-block: 14px; }
   body:not(.community-report) footer { break-inside: avoid; margin-top: 8px; }
-  body:not(.community-report) .report-ending { break-inside: avoid; }
   body:not(.community-report) .report-closing { break-inside: avoid; }
   body:not(.community-report) .footer-content { display: flex; justify-content: space-between; gap: 16px; border: 0; border-top: 1px solid #dbe4ee; border-radius: 0; padding-top: 6px; }
   body:not(.community-report) .project, body:not(.community-report) .promotion { padding: 0; border: 0; background: transparent; }

@@ -1119,8 +1119,8 @@ def render_report(result, output, language, text, requested_format="html", compa
 <details id="results"><summary>{esc(text["full_results"])}</summary><dl class="metric-guide">{metric_guide}</dl><div class="table-wrap">{table}</div></details>
 <details id="environment"><summary>{esc(text["environment"])}</summary><dl class="metadata">{"".join(metadata)}{environment_html}</dl>{depth_table}</details>
 <div class="report-ending"><details id="method"><summary>{esc(text["method"])}</summary><p>{esc(text["method_text"])}</p><p>{esc(text["window_method"])}</p><p>{esc(text["sensors_limit"])}</p>{cache_method}<div class="table-wrap">{config_table}</div></details>
-{('<aside class="run-notes">' + "".join(f"<p>{esc(n)}</p>" for n in notes) + "</aside>") if notes else ""}
-<div class="report-closing">{agent_usage_html()}
+<div class="report-closing">{('<aside class="run-notes">' + "".join(f"<p>{esc(n)}</p>" for n in notes) + "</aside>") if notes else ""}
+{agent_usage_html()}
 <footer><div class="footer-content"><div class="project">{project_html}</div>{promotion_html}</div><p class="privacy">{esc(text["privacy"])} {esc(text["raw"])}</p></footer></div></div>
 </main><script>
 const collapsedForPrint = [];
