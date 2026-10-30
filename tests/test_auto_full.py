@@ -93,6 +93,50 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(collection_status(result["cases"][0]), "collection_incomplete")
         self.assertIn("sustained.collection", core_completeness(result)["missing_core"])
 
+    def test_timer_boundary_preserves_final_metrics_without_inventing_a_point(self):
+        result = complete_result()
+        case = result["cases"][0]
+        case["metrics"]["runtime_ms"] = 3999
+        case["metrics"]["write"]["runtime_ms"] = 4000
+        case["series"] = [dict(seconds=t, mb_s=100, direction="write") for t in (1.005, 2.010, 3.019)]
+        original = copy.deepcopy(case)
+        self.assertEqual(collection_status(case), "collected")
+        self.assertEqual(core_completeness(result), {"complete":True,"missing_core":[]})
+        self.assertEqual(case, original)
+        case["metrics"]["runtime_ms"] = 100000
+        case["metrics"]["write"]["runtime_ms"] = 100000
+        case["series"] = [dict(seconds=i*1.04, mb_s=100, direction="write") for i in range(1,97)]
+        self.assertEqual(collection_status(case), "collected")
+        case["series"].pop(48)
+        self.assertEqual(collection_status(case), "collection_incomplete")
+        for runtime, expected in ((999,"short_window"),(1000,"short_window"),(1004,"short_window"),(1050,"short_window"),(1051,"collection_incomplete")):
+            case["metrics"]["runtime_ms"] = runtime
+            case["metrics"]["write"]["runtime_ms"] = runtime
+            case["series"] = []
+            self.assertEqual(collection_status(case), expected)
+
+    def test_timer_boundary_still_rejects_internal_holes_and_bad_samples(self):
+        base = complete_result()["cases"][0]
+        base["metrics"]["runtime_ms"] = 4000
+        base["metrics"]["write"]["runtime_ms"] = 4000
+        for times in ((2.010,3.019),(1.005,3.019),(1.005,2.010),(),
+                      (1,2,4),(1,2,2,3),(3,2,1),(1,2,4.051)):
+            case = copy.deepcopy(base)
+            case["series"] = [dict(seconds=t, mb_s=100, direction="write") for t in times]
+            self.assertEqual(collection_status(case), "collection_incomplete", times)
+        for field,value in (("mb_s",math.nan),("mb_s",-1),("seconds",math.inf),("direction","read"),("direction","unknown")):
+            case = copy.deepcopy(base)
+            case["series"] = [dict(seconds=t, mb_s=100, direction="write") for t in (1.005,2.010,3.019)]
+            case["series"][1][field] = value
+            self.assertEqual(collection_status(case), "collection_incomplete", (field,value))
+        case = copy.deepcopy(base)
+        case["series"] = [dict(seconds=t, mb_s=100, direction="write") for t in (1.005,2.010,3.019)]
+        case["collection_error"] = "invalid log record"
+        self.assertEqual(collection_status(case), "collection_incomplete")
+        case.pop("collection_error")
+        case["series"].append(dict(seconds=1,mb_s=100,direction="read"))
+        self.assertEqual(collection_status(case), "collection_incomplete")
+
     def test_active_mean_percentile_zero_nan_and_mixed_missing_are_partial(self):
         for field in ("mean", "50", "95", "99"):
             for value in (None, math.nan, -1, True):

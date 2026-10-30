@@ -458,6 +458,16 @@ def collection_status(case):
     )
     if case.get("collection_error"):
         return "collection_incomplete"
+    series = case.get("series", [])
+    if not isinstance(series, list) or any(
+        not isinstance(p, dict) or p.get("direction") not in active for p in series
+    ):
+        return "collection_incomplete"
+    # fio averages each 1000 ms; its final byte endpoint need not complete
+    # another timer interval. Reuse the 50 ms boundary tolerance for each
+    # observed interval, while rejecting holes inside the collected series.
+    interval_seconds, timer_tolerance = 1.0, .05
+    max_interval = interval_seconds + timer_tolerance
     durations = []
     for direction in active:
         if not isinstance(data.get(direction), dict):
@@ -467,20 +477,23 @@ def collection_status(case):
             return "collection_incomplete"
         direction_seconds = active_runtime / 1000
         durations.append(direction_seconds)
-        points = [p for p in case.get("series", []) if p.get("direction") == direction]
+        points = [p for p in series if p.get("direction") == direction]
         times = [p.get("seconds") for p in points]
         if any(type(t) not in (int, float) or not math.isfinite(t) or t <= 0 for t in times):
             return "collection_incomplete"
         if any(type(p.get("mb_s")) not in (int, float) or not math.isfinite(p["mb_s"]) or p["mb_s"] < 0 for p in points):
             return "collection_incomplete"
-        if times and times[-1] > direction_seconds + .05:
+        if times and times[-1] > direction_seconds + timer_tolerance:
             return "collection_incomplete"
-        if direction_seconds >= 1 and (not times or len(times) < int(direction_seconds)
-                             or times[0] > 2 or direction_seconds - times[-1] > 1.05):
+        if not times:
+            if direction_seconds > max_interval:
+                return "collection_incomplete"
+            continue
+        if times[0] > max_interval or direction_seconds - times[-1] > max_interval:
             return "collection_incomplete"
-        if any(not 0 < b - a <= 2 for a, b in zip(times, times[1:])):
+        if any(not 0 < b - a <= max_interval for a, b in zip(times, times[1:])):
             return "collection_incomplete"
-    return "short_window" if max(durations) < 1 else "collected"
+    return "short_window" if max(durations) < interval_seconds or not series else "collected"
 
 
 def case_core_missing(case, job, config):
