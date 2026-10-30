@@ -137,6 +137,23 @@ class EvidenceTests(unittest.TestCase):
         case["series"].append(dict(seconds=1,mb_s=100,direction="read"))
         self.assertEqual(collection_status(case), "collection_incomplete")
 
+    def test_log_millisecond_boundaries_do_not_expand_timer_tolerance(self):
+        for runtime,times,expected in (
+            (4200,[1.05,2.10,3.15,4.20],"collected"),
+            (4201,[1.05,2.10,3.151,4.201],"collection_incomplete"),
+            (2000,[1.05,2.0],"collected"),
+            (2000,[1.051,2.0],"collection_incomplete"),
+            (4200,[1.05,2.10,3.15],"collected"),
+            (4201,[1.05,2.10,3.15],"collection_incomplete"),
+            (2000,[1.0,2.05],"collected"),
+            (2000,[1.001,2.051],"collection_incomplete"),
+        ):
+            case = complete_result()["cases"][0]
+            case["metrics"]["runtime_ms"] = runtime
+            case["metrics"]["write"]["runtime_ms"] = runtime
+            case["series"] = [dict(seconds=t,mb_s=100,direction="write") for t in times]
+            self.assertEqual(collection_status(case),expected,(runtime,times))
+
     def test_active_mean_percentile_zero_nan_and_mixed_missing_are_partial(self):
         for field in ("mean", "50", "95", "99"):
             for value in (None, math.nan, -1, True):

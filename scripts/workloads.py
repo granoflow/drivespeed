@@ -468,6 +468,8 @@ def collection_status(case):
     # observed interval, while rejecting holes inside the collected series.
     interval_seconds, timer_tolerance = 1.0, .05
     max_interval = interval_seconds + timer_tolerance
+    # Only float roundoff, far below fio's millisecond timestamp precision.
+    comparison_epsilon = 1e-9
     durations = []
     for direction in active:
         if not isinstance(data.get(direction), dict):
@@ -483,15 +485,15 @@ def collection_status(case):
             return "collection_incomplete"
         if any(type(p.get("mb_s")) not in (int, float) or not math.isfinite(p["mb_s"]) or p["mb_s"] < 0 for p in points):
             return "collection_incomplete"
-        if times and times[-1] > direction_seconds + timer_tolerance:
+        if times and times[-1] > direction_seconds + timer_tolerance + comparison_epsilon:
             return "collection_incomplete"
         if not times:
-            if direction_seconds > max_interval:
+            if direction_seconds > max_interval + comparison_epsilon:
                 return "collection_incomplete"
             continue
-        if times[0] > max_interval or direction_seconds - times[-1] > max_interval:
+        if times[0] > max_interval + comparison_epsilon or direction_seconds - times[-1] > max_interval + comparison_epsilon:
             return "collection_incomplete"
-        if any(not 0 < b - a <= max_interval for a, b in zip(times, times[1:])):
+        if any(not 0 < b - a <= max_interval + comparison_epsilon for a, b in zip(times, times[1:])):
             return "collection_incomplete"
     return "short_window" if max(durations) < interval_seconds or not series else "collected"
 
