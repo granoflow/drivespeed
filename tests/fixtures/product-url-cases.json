@@ -1,0 +1,102 @@
+[
+  {
+    "id": "invalid_hex",
+    "url": "https://example.com/?%ZZ=1",
+    "canonical": null
+  },
+  {
+    "id": "bare_percent",
+    "url": "https://example.com/?%=1",
+    "canonical": null
+  },
+  {
+    "id": "truncated_escape",
+    "url": "https://example.com/?%2=1",
+    "canonical": null
+  },
+  {
+    "id": "invalid_nibble",
+    "url": "https://example.com/?%G0=1",
+    "canonical": null
+  },
+  {
+    "id": "invalid_utf8",
+    "url": "https://example.com/?%FF=1",
+    "canonical": null
+  },
+  {
+    "id": "broken_continuation",
+    "url": "https://example.com/?%C3%28=1",
+    "canonical": null
+  },
+  {
+    "id": "truncated_utf8",
+    "url": "https://example.com/?%E4%BD=1",
+    "canonical": null
+  },
+  {
+    "id": "overlong_utf8",
+    "url": "https://example.com/?%C0%AF=1",
+    "canonical": null
+  },
+  {
+    "id": "surrogate_utf8",
+    "url": "https://example.com/?%ED%A0%80=1",
+    "canonical": null
+  },
+  {
+    "id": "out_of_range_utf8",
+    "url": "https://example.com/?%F4%90%80%80=1",
+    "canonical": null
+  },
+  {
+    "id": "meaningful_repeats",
+    "url": "https://Example.com:443/Article?id=2&utm_source=x&id=3#section",
+    "canonical": "https://example.com/Article?id=2&id=3"
+  },
+  {
+    "id": "encoded_utf8_key",
+    "url": "https://example.com/?%E4%BD%A0=one&id=2",
+    "canonical": "https://example.com/?%E4%BD%A0=one&id=2"
+  },
+  {
+    "id": "literal_utf8_key",
+    "url": "https://example.com/?键=one&id=2",
+    "canonical": "https://example.com/?键=one&id=2"
+  },
+  {
+    "id": "encoded_tracker_key",
+    "url": "https://example.com/?%75tm_source=x&id=2",
+    "canonical": "https://example.com/?id=2"
+  },
+  {
+    "id": "plus_key_and_value",
+    "url": "https://example.com/?a+b=c%2Bd&id=2",
+    "canonical": "https://example.com/?a+b=c%2Bd&id=2"
+  },
+  {
+    "id": "encoded_meaningful_key",
+    "url": "https://example.com/?%69d=1&id=2",
+    "canonical": "https://example.com/?%69d=1&id=2"
+  },
+  {
+    "id": "query_values_unchanged",
+    "url": "https://example.com/?article=%E4%BD%A0%2Ftwo&page=2&page=1",
+    "canonical": "https://example.com/?article=%E4%BD%A0%2Ftwo&page=2&page=1"
+  },
+  {
+    "id": "hash_route",
+    "url": "https://example.com/#/articles/one?id=2",
+    "canonical": "https://example.com/#/articles/one?id=2"
+  },
+  {
+    "id": "hashbang_route",
+    "url": "https://example.com/#!/articles/two?item=3",
+    "canonical": "https://example.com/#!/articles/two?item=3"
+  },
+  {
+    "id": "literal_path_not_collapsed",
+    "url": "https://example.com/a/../Article?item=2",
+    "canonical": "https://example.com/a/../Article?item=2"
+  }
+]

@@ -35,9 +35,18 @@ def canonical_url(value):
     if (not re.fullmatch(r'[a-zA-Z0-9.-]+', host) or '.' not in host or host.endswith(('.local', '.internal', '.localhost', '.test'))
             or not re.search(r'[a-zA-Z]', host.rsplit('.', 1)[-1])):
         raise ValueError('invalid_profile')
-    query = '&'.join(p for p in u.query.split('&') if not (
-        unquote_plus(p.split('=', 1)[0]).lower().startswith('utm_')
-        or unquote_plus(p.split('=', 1)[0]).lower() in ('fbclid', 'gclid')))
+    def retain_query_part(part):
+        raw_key = part.split('=', 1)[0]
+        # Match the website's decodeURIComponent contract. urllib otherwise
+        # keeps malformed escapes and replaces invalid UTF-8 silently.
+        if re.search(r'%(?![0-9a-fA-F]{2})', raw_key):
+            raise ValueError('invalid_profile')
+        try:
+            key = unquote_plus(raw_key, encoding='utf-8', errors='strict').lower()
+        except UnicodeError:
+            raise ValueError('invalid_profile') from None
+        return not key.startswith('utm_') and key not in ('fbclid', 'gclid')
+    query = '&'.join(p for p in u.query.split('&') if retain_query_part(p))
     fragment = u.fragment if u.fragment.startswith(('/', '!/')) else ''
     return urlunsplit(('https', ('[' + host.lower() + ']') if ':' in host else host.lower(), u.path or '/', query, fragment))
 

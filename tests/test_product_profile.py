@@ -30,6 +30,21 @@ def fixture_profile():
 
 
 class ProductProfileTests(unittest.TestCase):
+    def test_shared_query_key_vectors_match_profile_consumer(self):
+        vectors = json.loads((Path(__file__).parent / 'fixtures/product-url-cases.json').read_text())
+        for vector in vectors:
+            with self.subTest(vector=vector['id']):
+                profile = fixture_profile()
+                profile['review_sources'][0].update(url=vector['url'], canonical_url=vector['url'])
+                if vector['canonical'] is None:
+                    with self.assertRaisesRegex(ValueError, 'invalid_profile'):
+                        canonical_url(vector['url'])
+                    with self.assertRaisesRegex(ValueError, 'invalid_profile'):
+                        validate_profile(profile)
+                else:
+                    self.assertEqual(canonical_url(vector['url']), vector['canonical'])
+                    validate_profile(profile)
+
     def test_url_identity_is_conservative_and_offline(self):
         self.assertEqual(canonical_url('https://Reviews.Example.com:443/Drive?id=2&utm_source=x&id=3#section'),
                          'https://reviews.example.com/Drive?id=2&id=3')
