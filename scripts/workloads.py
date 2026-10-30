@@ -445,6 +445,36 @@ def bandwidth_series(path, strict=False):
     return rows
 
 
+def active_runtime_ms(data, rw):
+    """Elapsed time evidenced by valid active I/O, without changing raw metrics."""
+    if not isinstance(data, dict):
+        return 0
+    total_runtime = data.get("runtime_ms")
+    if type(total_runtime) is not int or not 0 < total_runtime <= 2**64 - 1:
+        return 0
+    if rw == "randrw":
+        directions = ("read", "write")
+    elif rw in ("read", "randread"):
+        directions = ("read",)
+    elif rw in ("write", "randwrite"):
+        directions = ("write",)
+    else:
+        return 0
+    durations = []
+    for direction in directions:
+        item = data.get(direction)
+        if not isinstance(item, dict):
+            return 0
+        count = item.get("bytes")
+        runtime = item.get("runtime_ms", total_runtime)
+        if type(count) is not int or not 0 < count <= 2**64 - 1:
+            return 0
+        if type(runtime) is not int or not 0 < runtime <= 2**64 - 1:
+            return 0
+        durations.append(runtime)
+    return max(durations)
+
+
 def collection_status(case):
     """Do not confuse a legal subsecond byte endpoint with missing collection."""
     data = case.get("metrics", {})
@@ -547,9 +577,7 @@ def case_core_missing(case, job, config):
                       if type(data.get(d, {}).get("bytes", 0)) is int)
     if transferred > job["io_bytes"]:
         missing.append(f"{name}.io_bound")
-    if name != "sustained" and transferred < job["io_bytes"] and (
-        type(data.get("runtime_ms")) is not int or data["runtime_ms"] < job["runtime"] * 1000
-    ):
+    if name != "sustained" and transferred < job["io_bytes"] and active_runtime_ms(data, job["rw"]) < job["runtime"] * 1000:
         missing.append(f"{name}.endpoint")
     return missing
 

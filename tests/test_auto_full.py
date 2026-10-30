@@ -12,7 +12,7 @@ import tempfile
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from workloads import GIB, MIB, auto_plan, core_completeness, collection_status, metrics
+from workloads import GIB, MIB, auto_plan, core_completeness, collection_status, metrics, active_runtime_ms, case_core_missing
 import benchmark
 import system_io
 from progress import messages
@@ -74,6 +74,45 @@ class AutomaticPlanTests(unittest.TestCase):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_active_endpoint_runtime_preserves_direction_and_legacy_absence(self):
+        data = dict(runtime_ms=29999,write=dict(bytes=4096,runtime_ms=30000),read=dict(bytes=0,runtime_ms=999999))
+        before = copy.deepcopy(data)
+        self.assertEqual(active_runtime_ms(data,"write"),30000)
+        self.assertEqual(data,before)
+        data["write"]["runtime_ms"] = 29999
+        self.assertEqual(active_runtime_ms(data,"write"),29999)
+        data["write"].pop("runtime_ms")
+        self.assertEqual(active_runtime_ms(data,"write"),29999)
+        data["read"].update(bytes=4096,runtime_ms=30000)
+        self.assertEqual(active_runtime_ms(data,"randrw"),30000)
+        for field in ("bytes","runtime_ms"):
+            for value in (None,0,-1,True,math.nan,2**64):
+                invalid = copy.deepcopy(data)
+                invalid["write"][field] = value
+                self.assertEqual(active_runtime_ms(invalid,"randrw"),0,(field,value))
+        for value in (None,0,-1,True,math.nan):
+            invalid = copy.deepcopy(data)
+            invalid["runtime_ms"] = value
+            self.assertEqual(active_runtime_ms(invalid,"write"),0)
+
+    def test_core_time_endpoint_uses_valid_active_runtime(self):
+        for name in ("seq_write","mixed"):
+            result = complete_result()
+            job = next(j for j in result["plan"]["jobs"] if j["name"]==name)
+            case = next(c for c in result["cases"] if c["name"]==name)
+            directions = ("read","write") if name=="mixed" else ("write",)
+            case["metrics"]["runtime_ms"] = 29999
+            case["series"] = []
+            for direction in directions:
+                case["metrics"][direction]["runtime_ms"] = 30000
+                case["metrics"][direction]["bytes"] //= 2
+                case["series"].extend(dict(seconds=t,mb_s=100,direction=direction) for t in range(1,31))
+            self.assertEqual(case_core_missing(case,job,result["plan"]),[])
+            case["metrics"]["runtime_ms"] = 30000
+            for direction in directions:
+                case["metrics"][direction]["runtime_ms"] = 29999
+            self.assertIn(name+".endpoint",case_core_missing(case,job,result["plan"]))
+
     def test_real_mean_is_completion_latency_in_microseconds_once(self):
         source = {"error": 0, "job_runtime": 500, "read": {"io_bytes": 4096,
                   "bw_bytes": 8192, "iops": 2, "clat_ns": {"mean": 1234000,

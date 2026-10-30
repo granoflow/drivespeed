@@ -932,7 +932,7 @@ class ExecutionTests(unittest.TestCase):
             self.assertTrue((output / "prepare.case.json").exists())
 
     def test_unknown_eta_does_not_reject_completed_byte_or_time_budget(self):
-        for completed, runtime, direction_runtime in ((MIB, 1000, 1000), (MIB // 2, 10000, 1000), (MIB // 2, 0, 10000)):
+        for completed, runtime, direction_runtime, expected in ((MIB, 1000, 1000, True), (MIB // 2, 9999, 10000, True), (MIB // 2, 10000, 1000, False), (MIB // 2, 0, 10000, True)):
             with self.subTest(completed=completed, runtime=runtime, direction_runtime=direction_runtime):
                 work, output, script, target, config, job = self.setup_case()
                 job["name"] = "seq_write"
@@ -943,8 +943,8 @@ class ExecutionTests(unittest.TestCase):
                 with contextlib.redirect_stderr(io.StringIO()), patch.object(benchmark, "check_target", return_value={}):
                     case = benchmark.run_case({"path": str(script)}, job, config, "posixaio", output, work, target,
                                               Progress(["seq_write"], messages("en")))
-                self.assertEqual(case["status"], "completed", case.get("detail"))
-                self.assertTrue(case["metrics_complete"])
+                self.assertEqual(case["status"], "completed" if expected else "failed", case.get("detail"))
+                self.assertEqual(case["metrics_complete"], expected)
 
     def test_clean_early_exit_with_incomplete_snapshot_is_not_a_complete_measurement(self):
         for eta in (0, 2147483647):
@@ -964,12 +964,24 @@ class ExecutionTests(unittest.TestCase):
             with self.subTest(name=name):
                 work, output, script, target, config, job = self.setup_case(short=True)
                 job.update(name=name, require_complete=True)
-                script.write_text(script.read_text().replace("'job_runtime':1000", "'job_runtime':10000"))
+                script.write_text(script.read_text().replace("'job_runtime':1000", "'job_runtime':9999").replace("'runtime':1000", "'runtime':10000"))
                 with contextlib.redirect_stderr(io.StringIO()), patch.object(benchmark, "check_target", return_value={}):
                     case = benchmark.run_case({"path": str(script)}, job, config, "posixaio", output, work, target,
                                               Progress([name], messages("en")))
                 self.assertEqual(case["status"], "failed")
                 self.assertIn("Incomplete diagnostic coverage", case["detail"])
+
+    def test_time_endpoint_uses_active_runtime_without_rounding_up(self):
+        for active_runtime,expected in ((29999,"failed"),(30000,"completed")):
+            work, output, script, target, config, job = self.setup_case(short=True)
+            job.update(name="seq_write",runtime=30)
+            script.write_text(script.read_text().replace("'job_runtime':1000","'job_runtime':29999").replace("'runtime':1000",f"'runtime':{active_runtime}"))
+            with contextlib.redirect_stderr(io.StringIO()), patch.object(benchmark,"check_target",return_value={}):
+                case = benchmark.run_case({"path":str(script)},job,config,"posixaio",output,work,target,
+                                          Progress(["seq_write"],messages("en")))
+            self.assertEqual(case["status"],expected,case.get("detail"))
+            self.assertEqual(case["metrics"]["runtime_ms"],29999)
+            self.assertEqual(case["metrics"]["write"]["runtime_ms"],active_runtime)
 
     def test_invalid_or_failed_final_producer_cannot_mark_measurement_complete(self):
         for failure in ("zero", "io_error", "nonzero_exit", "truncated"):

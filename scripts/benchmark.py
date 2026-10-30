@@ -46,6 +46,7 @@ from workloads import (
     collection_status,
     core_completeness,
     case_core_missing,
+    active_runtime_ms,
 )
 from write_allowance import WriteAllowance, plan_hash
 
@@ -317,7 +318,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             # successful JSON). Require the measured workload endpoint instead
             # of treating ETA as a completion flag, including for early exits.
             if (cache_stop_requested is None and completed < job["io_bytes"]
-                    and (case["metrics"].get("runtime_ms") or 0) < job["runtime"] * 1000):
+                    and active_runtime_ms(case["metrics"], job["rw"]) < job["runtime"] * 1000):
                 raise ValueError("fio final snapshot has not reached the byte or runtime limit")
             if (job["name"] == "prepare" or job.get("require_complete")) and completed < job["io_bytes"]:
                 raise ValueError(
