@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from product_profile import canonical_url, load_profile, validate_profile, matches_profile
 from report import render_report
 import report
+import hardware
 from progress import messages
 from test_community import local_result
 from community_data import project_result, transport
@@ -73,13 +74,38 @@ class ProductProfileTests(unittest.TestCase):
 
     def test_nominal_identity_never_uses_filesystem_capacity(self):
         p = fixture_profile()
-        self.assertTrue(matches_profile(p, {'drive': {'model': 'Fixture SSD 2TB'}}))
-        self.assertFalse(matches_profile(p, {'drive': {'model': 'Fixture SSD 1TB'}}))
+        result = {'target': {'scope': 'physical', 'physical_devices': ['fixture-disk']},
+                  'hardware': {'drive': {'model': 'Fixture SSD 2TB'}}}
+        self.assertTrue(matches_profile(p, result))  # Historical model-only metadata.
+        result['hardware']['drive']['model'] = 'Fixture SSD 1TB'
+        self.assertFalse(matches_profile(p, result))
         p['raw_model'] = 'Unknown capacity SSD'
-        self.assertFalse(matches_profile(p, {'drive': {'model': p['raw_model']}, 'total_bytes': p['capacity_bytes']}))
+        result['hardware']['drive']['model'] = p['raw_model']
+        result['target']['total_bytes'] = p['capacity_bytes']
+        self.assertFalse(matches_profile(p, result))
+
+    def test_multi_disk_display_name_cannot_become_single_drive_evidence(self):
+        nodes = [{'bsd_name': name, 'device_model': 'Fixture SSD 2TB'} for name in ['disk8', 'disk9']]
+        for observed in [nodes, nodes[:1]]:  # Same models, or only one model exposed.
+            facts = hardware.mac_hardware({'SPNVMeDataType': observed}, ['disk8', 'disk9'])
+            self.assertEqual(facts['drive']['model'], 'Fixture SSD 2TB')
+            self.assertIsNone(facts['drive']['matching_model'])
+            result = {'target': {'scope': 'multi_device', 'physical_devices': ['disk8', 'disk9']}, 'hardware': facts}
+            self.assertFalse(matches_profile(fixture_profile(), result))
+            result['target']['scope'] = 'physical'  # Inconsistent metadata cannot override the count.
+            self.assertFalse(matches_profile(fixture_profile(), result))
+        for scope in ['unresolved', 'virtual', 'multi_device']:
+            result = {'target': {'scope': scope, 'physical_devices': ['disk8']},
+                      'hardware': {'drive': {'model': 'Fixture SSD 2TB', 'matching_model': 'Fixture SSD 2TB'}}}
+            self.assertFalse(matches_profile(fixture_profile(), result))
+        result['target']['scope'] = 'physical'
+        self.assertTrue(matches_profile(fixture_profile(), result))
+        result['hardware']['drive']['matching_model'] = None
+        self.assertFalse(matches_profile(fixture_profile(), result))
 
     def test_sidecar_export_preserves_raw_and_prior_output_on_identity_error(self):
         result = local_result(); result.pop('user_input', None)
+        result['target']['physical_devices'] = ['fixture-disk']
         result['hardware']['drive']['model'] = 'Fixture SSD 2TB'
         result['hardware']['drive']['matching_model'] = 'Fixture SSD 2TB'
         before = json.dumps(result, sort_keys=True)

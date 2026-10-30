@@ -111,10 +111,18 @@ def load_profile(path):
         raise ValueError('invalid_profile') from error
 
 
-def matches_profile(profile, hardware):
-    drive = hardware.get('drive', {})
+def matches_profile(profile, result):
+    target = result.get('target', {})
+    devices = target.get('physical_devices')
+    if (target.get('scope') != 'physical' or not isinstance(devices, list) or len(devices) != 1
+            or not isinstance(devices[0], str) or not devices[0]):
+        return False
+    drive = result.get('hardware', {}).get('drive', {})
     aliases = {model_key(v) for v in [profile['raw_model'], *profile['raw_model_aliases']]}
-    model = drive.get('matching_model') or drive.get('model')
+    # Explicit null means the collector could not establish a matching identity.
+    # Historical records without this field may use their model only when the
+    # saved target itself proves a unique physical device.
+    model = drive.get('matching_model') if 'matching_model' in drive else drive.get('model')
     if not isinstance(model, str) or model_key(model) not in aliases:
         return False
     capacity = drive.get('nominal_capacity_bytes')

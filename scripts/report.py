@@ -697,7 +697,7 @@ def render_report(result, output, language, text, requested_format="html", compa
     if product_profile is not None:
         from product_profile import validate_profile, matches_profile
         product_profile = validate_profile(product_profile)
-        if not matches_profile(product_profile, result.get('hardware', {})):
+        if not matches_profile(product_profile, result):
             raise ValueError('identity_conflict')
         sidecar = Path(output) / 'product-profile.json'
         if any(p.is_symlink() for p in (sidecar, *sidecar.parents)):
@@ -1219,7 +1219,7 @@ def main():
         if args.product_profile:
             from product_profile import load_profile, matches_profile
             profile = load_profile(args.product_profile)
-            if not matches_profile(profile, result.get('hardware', {})):
+            if not matches_profile(profile, result):
                 raise ValueError('identity_conflict')
         if args.user_input_file:
             result["user_input"] = json.loads(Path(args.user_input_file).read_text(encoding="utf-8"))

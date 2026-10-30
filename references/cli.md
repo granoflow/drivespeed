@@ -87,6 +87,6 @@ AI Agent 优先读取 `results.json` 的原始数值。读取 HTML 时可用 `#r
 
 `report.py --product-profile /absolute/product-profile.json` 可附带独立的产品资料快照；输入遵循 `assets/community/product-profile.schema.json`，候选准备输入由相邻 `product-profile-candidates.schema.json` 定义。此参数不联网，不重新测速，也不修改 `results.json`、投稿或原摘要。
 
-显式缺失、非法或设备身份不符的资料会非零退出，不忽略输入或覆盖已有报告。关联需要准确原型号/已核实别名，以及型号中的明确十进制 GB/TB 容量或独立 `nominal_capacity_bytes` 硬件事实；文件系统总量/可用空间不能证明商品容量。有效资料另存为输出目录的 `product-profile.json`，返回相应 artifact 路径；省略参数保持旧导出方式。标题与来源区的界面接线由后续界面阶段验收，不将附带快照称作已经展示。
+显式缺失、非法或设备身份不符的资料会非零退出，不忽略输入或覆盖已有报告。关联首先需要已保存的 `physical` 范围和唯一物理设备；多盘、虚拟、未解析或显式未确认的匹配型号不能降级使用展示名称。旧结果未保存匹配字段时，也只有明确单一物理目标才能使用旧型号。随后核对准确原型号/已核实别名，以及型号中的明确十进制 GB/TB 容量或独立 `nominal_capacity_bytes` 硬件事实；文件系统总量/可用空间不能证明商品容量。有效资料另存为输出目录的 `product-profile.json`，返回相应 artifact 路径；省略参数保持旧导出方式。标题与来源区的界面接线由后续界面阶段验收，不将附带快照称作已经展示。
 
 Web 维护命令的 `product_profile_import` 是离线 DB-only 资料导入，不是模型调用或网页抓取。`GET /api/v1/benchmarks/ID/product-profile` 仅对当前可公开报告读取资料；未关联时返回 null，隐藏/撤回报告不提供该资源。
