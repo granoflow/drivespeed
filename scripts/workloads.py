@@ -681,6 +681,11 @@ def sustained_summary(points, sampling_status=None):
         ):
             windows.append(mean(window))
     out["minimum_5s_mb_s"] = min(windows) if windows else None
+    if sampling_status is not None and end < 5:
+        # New-method fixed five-second values require five observed seconds.
+        # Keep the legacy descriptive calculation unchanged by default.
+        out["initial_mb_s"] = None
+        out["minimum_5s_mb_s"] = None
     first = out["initial_mb_s"]
     if first and end >= 20 and not out["sampling_gaps"]:
         out["drop_percent"] = (1 - out["tail_mean_mb_s"] / first) * 100

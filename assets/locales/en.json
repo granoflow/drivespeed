@@ -298,5 +298,6 @@
   "confirm_write": "Authorize this finite disk write plan? Type RUN to confirm: ",
   "core_incomplete": "Core measurements or required logs are incomplete. This is a partial result and cannot be submitted as a complete report.",
   "incomplete_measurement": "Required measurements or collection are incomplete.",
-  "sampling_irregular": "Sampling scheduling was uneven, limiting time resolution. Final statistics are retained; fixed-window and cache conclusions are not provided."
+  "sampling_irregular": "Sampling scheduling was uneven, limiting time resolution. Final statistics are retained; fixed-window and cache conclusions are not provided.",
+  "depth_raw": "Achieved depth distribution (fio values, not normalized)"
 }

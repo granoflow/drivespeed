@@ -800,6 +800,9 @@ def render_report(result, output, language, text, requested_format="html", compa
     short_cards, cards = cards, []
     summary = (sustained_summary(sustained_case.get("series", []), sampling_status=timing)
                if limited_windows else result.get("sustained_summary") or sustained_summary([]))
+    if automatic and not limited_windows:
+        qualified = sustained_summary(sustained_case.get("series", []), sampling_status=timing)
+        summary = dict(summary, initial_mb_s=qualified["initial_mb_s"], minimum_5s_mb_s=qualified["minimum_5s_mb_s"])
     summary_labels = [
         ("initial_mb_s", "initial"),
         ("tail_mean_mb_s", "tail_mean"),
@@ -1027,7 +1030,7 @@ def render_report(result, output, language, text, requested_format="html", compa
         "<table><thead><tr><th>"
         + esc(text["workload"])
         + "</th><th>"
-        + esc(text["depth"])
+        + esc(text["depth_raw"] if automatic else text["depth"])
         + "</th></tr></thead><tbody>"
         + depth_rows
         + "</tbody></table>"

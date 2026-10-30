@@ -226,6 +226,19 @@ class EvidenceTests(unittest.TestCase):
             self.assertIsNone(summary[key],key)
         self.assertEqual(len(points),120)
 
+    def test_new_method_initial_five_seconds_requires_observed_coverage(self):
+        from workloads import sustained_summary
+        for times in ((1.001,2.003,3.005),(.999,1.999,2.999,3.999,4.999)):
+            points = [dict(seconds=t,mb_s=100,direction="write") for t in times]
+            legacy = sustained_summary(points)
+            self.assertIsNotNone(legacy["initial_mb_s"])
+            qualified = sustained_summary(points,sampling_status="collected")
+            self.assertIsNone(qualified["initial_mb_s"])
+            self.assertIsNone(qualified["minimum_5s_mb_s"])
+        points = [dict(seconds=t,mb_s=100,direction="write") for t in range(1,6)]
+        self.assertEqual(sustained_summary(points,sampling_status="collected"),sustained_summary(points))
+        self.assertEqual(sustained_summary(points,sampling_status="collected")["initial_mb_s"],100)
+
     def test_irregular_final_curve_cannot_justify_cache_early_endpoint(self):
         result = complete_result(64*GIB)
         case,job = result["cases"][0],result["plan"]["jobs"][0]
@@ -497,6 +510,30 @@ def community_result(status="quiet_observed"):
 
 
 class CommunityContractTests(unittest.TestCase):
+    def test_short_new_report_ignores_cached_five_second_values_and_keeps_raw_depth(self):
+        from workloads import sustained_summary
+        from report import render_report,number
+        result = community_result()
+        result.pop("user_input",None)
+        case = result["cases"][0]
+        case["metrics"]["runtime_ms"] = 3271
+        case["metrics"]["write"]["runtime_ms"] = 3271
+        case["metrics"]["achieved_depth"] = {"1":100.244499,">=64":0}
+        case["elapsed_seconds"] = 4.4
+        case["series"] = [dict(seconds=t,mb_s=100,direction="write") for t in (1.001,2.003,3.005)]
+        result["sustained_summary"] = sustained_summary(case["series"])
+        result["sustained_summary"].update(initial_mb_s=9191917,minimum_5s_mb_s=9191918)
+        original = copy.deepcopy(result)
+        with tempfile.TemporaryDirectory() as directory:
+            paths = render_report(result,directory,"en",messages("en"))
+            html = Path(paths["html"]).read_text()
+        self.assertNotIn("9,191,917",html)
+        self.assertNotIn("9,191,918",html)
+        self.assertIn(number(case["metrics"]["write"]["mb_s"]),html)
+        self.assertIn(messages("en")["depth_raw"],html)
+        self.assertIn("100.244%",html)
+        self.assertEqual(result,original)
+
     def test_irregular_final_projection_and_report_suppress_stale_window_claims(self):
         from workloads import cache_assessment,sustained_summary
         from report import render_report
