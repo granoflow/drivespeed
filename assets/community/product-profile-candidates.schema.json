@@ -1,0 +1,449 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://drivespeed.anz.tv/schemas/product-profile-candidates-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "product_id",
+    "raw_model",
+    "raw_model_aliases",
+    "capacity_bytes",
+    "official_name",
+    "display_name",
+    "name_basis",
+    "candidates",
+    "existing_profile"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "product_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,79}$"
+    },
+    "raw_model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "raw_model_aliases": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+      },
+      "uniqueItems": true
+    },
+    "capacity_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "official_name": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "name_basis": {
+      "enum": [
+        "official",
+        "review",
+        "raw"
+      ]
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "url",
+          "scope"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "product_page",
+              "datasheet",
+              "review"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      },
+      "description": "Prepare processes at most 20 candidates per batch; remaining candidates form explicit resume input."
+    },
+    "existing_profile": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "product_id",
+            "raw_model",
+            "raw_model_aliases",
+            "capacity_bytes",
+            "official_name",
+            "display_name",
+            "name_basis",
+            "revision",
+            "official_sources",
+            "review_sources"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": 1,
+              "type": "integer"
+            },
+            "product_id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,79}$"
+            },
+            "raw_model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+            },
+            "raw_model_aliases": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+              },
+              "uniqueItems": true
+            },
+            "capacity_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "official_name": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+            },
+            "name_basis": {
+              "enum": [
+                "official",
+                "review",
+                "raw"
+              ]
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "official_sources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "publisher",
+                  "title",
+                  "display_name",
+                  "scope",
+                  "kind",
+                  "url",
+                  "canonical_url",
+                  "url_aliases",
+                  "identity_basis",
+                  "name_method",
+                  "model",
+                  "provider",
+                  "checked_on",
+                  "availability"
+                ],
+                "properties": {
+                  "publisher": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "display_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "kind": {
+                    "enum": [
+                      "product_page",
+                      "datasheet",
+                      "review"
+                    ]
+                  },
+                  "url": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "canonical_url": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "url_aliases": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                    },
+                    "uniqueItems": true
+                  },
+                  "identity_basis": {
+                    "enum": [
+                      "normalized_url",
+                      "verified_canonical",
+                      "verified_redirect"
+                    ]
+                  },
+                  "name_method": {
+                    "enum": [
+                      "title_fallback",
+                      "model"
+                    ]
+                  },
+                  "model": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "provider": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "checked_on": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d\\d-\\d\\d$"
+                  },
+                  "availability": {
+                    "enum": [
+                      "verified",
+                      "unavailable"
+                    ]
+                  }
+                }
+              }
+            },
+            "review_sources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "publisher",
+                  "title",
+                  "display_name",
+                  "scope",
+                  "kind",
+                  "url",
+                  "canonical_url",
+                  "url_aliases",
+                  "identity_basis",
+                  "name_method",
+                  "model",
+                  "provider",
+                  "checked_on",
+                  "availability"
+                ],
+                "properties": {
+                  "publisher": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "display_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "kind": {
+                    "enum": [
+                      "product_page",
+                      "datasheet",
+                      "review"
+                    ]
+                  },
+                  "url": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "canonical_url": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2048,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "url_aliases": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                    },
+                    "uniqueItems": true
+                  },
+                  "identity_basis": {
+                    "enum": [
+                      "normalized_url",
+                      "verified_canonical",
+                      "verified_redirect"
+                    ]
+                  },
+                  "name_method": {
+                    "enum": [
+                      "title_fallback",
+                      "model"
+                    ]
+                  },
+                  "model": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "provider": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "checked_on": {
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^\\d{4}-\\d\\d-\\d\\d$"
+                  },
+                  "availability": {
+                    "enum": [
+                      "verified",
+                      "unavailable"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

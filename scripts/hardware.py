@@ -4,6 +4,7 @@ import json
 import base64
 import math
 import platform
+import plistlib
 import re
 import subprocess
 from pathlib import Path
@@ -199,6 +200,20 @@ def collect_hardware(
                 timeout=45,
             )
             hardware = mac_hardware(json.loads(output), target["physical_devices"])
+            # A whole-machine Thunderbolt candidate never proves this target's path.
+            # Collect only in memory and project only target-ancestor facts.
+            try:
+                from mac_ancestry import mac_access_facts
+                raw = subprocess.check_output(['ioreg', '-a', '-l', '-p', 'IOService'], timeout=20)
+                if len(raw) <= 16_777_216:
+                    access = mac_access_facts(plistlib.loads(raw), target['physical_devices'])
+                    if access:
+                        if not hardware['controller'].get('model'):
+                            hardware['controller'].update(access['controller'])
+                        hardware['access_interface'] = access['access_interface']
+                        hardware.setdefault('links', []).append(access['link'])
+            except (OSError, ValueError, plistlib.InvalidFileException, subprocess.SubprocessError):
+                pass  # Retain previous reported/internal facts; never guess a binding.
         elif platform.system() == "Linux":
             fields = []
             for name in ("sys_vendor", "product_name", "product_version"):

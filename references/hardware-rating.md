@@ -56,3 +56,8 @@
 离线规范名与明确别名由 assets/interface-types.json 提供；scripts/interface_types.py 不从实测速率或 USB-C/M.2 形态猜协议。接入接口与硬盘内部链路分开；用户确认的新名称经 hardware.access_interface 进入新投稿 storage.connection，原系统protocol保留。服务端分类 ID/revision 是派生解释，不改变原上传文字或其哈希；证据不足按用户原名显示，不进入具体接口筛选。
 
 公共电脑型号值和相关自动依据移除后，legacy assessment.references 不再公开；保留非电脑 links/specs/capabilities 供当前三维利用率计算。不会重算原 context 哈希冒历史依据。原始投稿/内部证据不因本地显示开关或公共投影而改变。
+# macOS 目标祖先证据
+
+本次运行可在内存中解析 IORegistry 的唯一目标物理盘祖先。只有桥接节点确在该目标路径上，才把 `ASMedia 246x` 作为系列级系统标识，并保留 `precision=series`；不能升级为 ASM2464PD，也不套精确芯片上限。全机候选、USB-C 外形或速度不能证明连接归属。USB4 外部路径与 NVMe/PCIe 内部链路分列，系统物理身份检查所用的 `target.protocol` 保持原值。
+
+含单位的链路速率只作为系统报告值；未暴露速率时不按电脑端口能力补值。无绑定、多个目标或歧义输入保留原候选状态。解析的完整系统清单只在内存使用，不写报告或缓存。历史报告不能用新采集回填。

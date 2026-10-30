@@ -83,3 +83,10 @@ AI Agent 优先读取 `results.json` 的原始数值。读取 HTML 时可用 `#r
 `benchmark.py --interface-name NAME` 接受用户已确认的 1..80 字符接口事实，写入 `hardware.access_interface`，保留系统 `target.protocol`；上传使用该 name 作为原始 `storage.connection`，因此属于新投稿内容和摘要的一部分，与显示选项不同。普通 user_input 不自动覆盖它。已有冻结报告不能沿旧 ID/同意改变接口名称；测量后补充只在用户确认的同 run 派生副本上进行，原始 fio 与旧 raw 保持。
 
 `python3 scripts/interface_types.py --name NAME --language en` 离线识别明确别名；`--catalog-stdin` 可从标准输入读取当前公开接口字典，结果只留在内存/标准输出。未知原名保留，不猜测；不因归一化启动测速或模型。
+# 离线产品资料快照
+
+`report.py --product-profile /absolute/product-profile.json` 可附带独立的产品资料快照；输入遵循 `assets/community/product-profile.schema.json`，候选准备输入由相邻 `product-profile-candidates.schema.json` 定义。此参数不联网，不重新测速，也不修改 `results.json`、投稿或原摘要。
+
+显式缺失、非法或设备身份不符的资料会非零退出，不忽略输入或覆盖已有报告。关联需要准确原型号/已核实别名，以及型号中的明确十进制 GB/TB 容量或独立 `nominal_capacity_bytes` 硬件事实；文件系统总量/可用空间不能证明商品容量。有效资料另存为输出目录的 `product-profile.json`，返回相应 artifact 路径；省略参数保持旧导出方式。标题与来源区的界面接线由后续界面阶段验收，不将附带快照称作已经展示。
+
+Web 维护命令的 `product_profile_import` 是离线 DB-only 资料导入，不是模型调用或网页抓取。`GET /api/v1/benchmarks/ID/product-profile` 仅对当前可公开报告读取资料；未关联时返回 null，隐藏/撤回报告不提供该资源。

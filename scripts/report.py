@@ -693,7 +693,15 @@ def render_diagnostics(result, text):
     return '<section id="diagnostics"><h2>' + esc(text["diagnostics"]) + '</h2>' + ''.join(parts) + '</section>'
 
 
-def render_report(result, output, language, text, requested_format="html", comparison=None, community_messages=None, show_computer_model=False):
+def render_report(result, output, language, text, requested_format="html", comparison=None, community_messages=None, show_computer_model=False, product_profile=None):
+    if product_profile is not None:
+        from product_profile import validate_profile, matches_profile
+        product_profile = validate_profile(product_profile)
+        if not matches_profile(product_profile, result.get('hardware', {})):
+            raise ValueError('identity_conflict')
+        sidecar = Path(output) / 'product-profile.json'
+        if any(p.is_symlink() for p in (sidecar, *sidecar.parents)):
+            raise ValueError('output_failed')
     community_html = ""
     if comparison is not None:
         from community_report import validate_context, report_messages, summary_html
@@ -1169,6 +1177,11 @@ window.addEventListener('afterprint', () => {{
     if comparison is not None:
         from community_report import render_comparison
         artifacts.update(render_comparison(comparison, result, output, language, text, requested_format, community_messages, show_computer_model))
+    if product_profile is not None:
+        from product_profile import save_snapshot
+        sidecar = output / 'product-profile.json'
+        save_snapshot(product_profile, sidecar)
+        artifacts['product_profile'] = str(sidecar)
     return artifacts
 
 
@@ -1194,6 +1207,7 @@ def main():
     )
     p.add_argument("--format", choices=["html", "pdf"], default="html")
     p.add_argument("--show-computer-model", action="store_true", help="Display this computer model in local HTML/PDF only; never changes the submission or its hash")
+    p.add_argument("--product-profile", help="Optional offline, identity-bound product evidence; export a separate snapshot without changing measurements")
     args = p.parse_args()
     try:
         result = json.loads(Path(args.input).read_text(encoding="utf-8"))
@@ -1201,6 +1215,12 @@ def main():
             result.get("cases"), list
         ):
             raise ValueError("Unsupported result schema")
+        profile = None
+        if args.product_profile:
+            from product_profile import load_profile, matches_profile
+            profile = load_profile(args.product_profile)
+            if not matches_profile(profile, result.get('hardware', {})):
+                raise ValueError('identity_conflict')
         if args.user_input_file:
             result["user_input"] = json.loads(Path(args.user_input_file).read_text(encoding="utf-8"))
         if args.evaluation_file:
@@ -1248,7 +1268,7 @@ def main():
                 comparison = read_comparison(store,args.comparison_id)
         elif args.community_state_dir or args.community_messages:
             raise ValueError("Community report options require --comparison-id")
-        artifacts = render_report(result, output, args.language, text, args.format, comparison, args.community_messages, args.show_computer_model)
+        artifacts = render_report(result, output, args.language, text, args.format, comparison, args.community_messages, args.show_computer_model, profile)
         print(json.dumps(artifacts, ensure_ascii=False))
         return 0 if args.format == "html" or (artifacts["pdf"] and (comparison is None or artifacts.get("comparison_pdf"))) else 5
     except (ValueError, OSError) as exc:

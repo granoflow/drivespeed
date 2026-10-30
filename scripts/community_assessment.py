@@ -46,7 +46,7 @@ def project_assessment(result,payload):
         if link.get('kind') not in ('pcie','usb','sata') or link.get('state') not in ('reported','negotiated'):
             continue
         entry={key:link.get(key) for key in LINK_FIELDS}
-        entry['source']='system' if str(link.get('source','')).startswith(('sysfs:','system_profiler:')) else 'user'
+        entry['source']='system' if str(link.get('source','')).startswith(('sysfs:','system_profiler:')) or link.get('source') == 'ioreg:target-ancestor' else 'user'
         for key in ('gt_s','lanes','max_gt_s','max_lanes','gbps'):
             value=entry[key]
             if not positive(value) or value>1000000000 or key in ('lanes','max_lanes') and (int(value)!=value or value>32):

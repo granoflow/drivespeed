@@ -334,7 +334,7 @@ def project_result(result, profile_url, intro="", submission_id=None):
     if access_interface is not None:
         from interface_types import confirmed_interface
         try:
-            if not isinstance(access_interface,dict) or access_interface.get("source") != "user":
+            if not isinstance(access_interface,dict) or access_interface.get("source") not in ("user", "ioreg:target-ancestor"):
                 raise ValueError()
             connection = confirmed_interface(access_interface.get("name"))["name"]
         except ValueError:
