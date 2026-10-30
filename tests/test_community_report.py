@@ -28,6 +28,20 @@ class ReportTests(unittest.TestCase):
         self.local = self.store.payload(ID)
     def tearDown(self):
         self.store.close()
+    def test_achieved_depth_absence_is_explicit_and_observed_values_are_preserved(self):
+        for case in self.result["cases"]:
+            case.get("metrics", {}).pop("achieved_depth", None)
+        with tempfile.TemporaryDirectory() as directory:
+            missing = report.render_report(self.result,directory,"zh-CN",messages("zh-CN"))
+            document = Path(missing["html"]).read_text()
+            environment = document.split('<details id="environment">',1)[1].split('<div class="report-ending">',1)[0]
+            self.assertIn('实际队列深度分布: 不可用',environment)
+            self.assertNotIn('<table>',environment)
+            self.result["cases"][0].setdefault("metrics",{})["achieved_depth"] = {"1":100.0,"16":0.0}
+            observed = report.render_report(self.result,directory,"zh-CN",messages("zh-CN"))
+            environment = Path(observed["html"]).read_text().split('<details id="environment">',1)[1].split('<div class="report-ending">',1)[0]
+            self.assertIn('1: 100%',environment)
+            self.assertNotIn('16: 0%',environment)
     def facts(self, n=3):
         value = receipt(self.local); base = value["similar"]["items"][0]; value["similar"]["items"] = []
         for index in range(n):

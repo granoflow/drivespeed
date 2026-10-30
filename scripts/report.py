@@ -1003,19 +1003,21 @@ def render_report(result, output, language, text, requested_format="html", compa
     public_env["fio"] = env.get("fio", {}).get("version") if env.get("fio") else None
     environment_html = "".join(f'<div class="metric-line"><dt>{esc(text[key if key != "fio" else "fio_version"])}</dt><dd>{esc(value or text["unknown"])}</dd></div>'
         for key,value in public_env.items())
+    depth_values = [
+        ", ".join(
+            f"{k}: {v:g}%"
+            for k, v in c.get("metrics", {}).get("achieved_depth", {}).items()
+            if type(v) in (int, float) and math.isfinite(v) and v > 0
+        )
+        for c in cases
+    ]
     depth_rows = "".join(
         "<tr><td>"
         + esc(text.get(c["name"], c["name"]))
         + '</td><td dir="ltr">'
-        + esc(
-            ", ".join(
-                f"{k}: {v:g}%"
-                for k, v in c.get("metrics", {}).get("achieved_depth", {}).items()
-                if isinstance(v, (int, float)) and v
-            )
-        )
+        + esc(value or text["unknown"])
         + "</td></tr>"
-        for c in cases
+        for c, value in zip(cases, depth_values)
     )
     depth_table = (
         "<table><thead><tr><th>"
@@ -1025,6 +1027,7 @@ def render_report(result, output, language, text, requested_format="html", compa
         + "</th></tr></thead><tbody>"
         + depth_rows
         + "</tbody></table>"
+        if any(depth_values) else f'<p>{esc(text["depth"])}: {esc(text["unknown"])}</p>'
     )
     config_head = "".join(
         "<th>" + esc(text[k]) + "</th>"
