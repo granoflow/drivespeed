@@ -22,7 +22,9 @@
 
 另外输出整份报告的一组 **相对主控、相对接口、相对硬盘** 星级，下面一条配置点评。不是每项测速各三组，不使用“4/5 表现良好”，也不把星级当硬件质量/健康分。
 
-- 分子：完整且 metrics_complete=true 的 1 MiB、QD16 顺序读取/写入各自全程平均 MB/s，不取瞬时峰值，不混入随机和缓存后速度。公开 full 报告保留完整11项；本地 quick/中断报告仍可使用，有哪些方向就明确计算哪些方向。
+设备利用率星级与瓶颈/均衡/异常归因须先有明确quiet_observed。interference_observed、visibility_limited及历史quality缺省unknown仍展示原速度、准确硬件标识与理论能力，但不作纯净设备星级或新统计。quality缺失不回填历史载荷，不改原hash、原HTML/PDF或冻结比较；新的动态展示如实说明背景未记录。
+
+- 分子：完整且 metrics_complete=true 的 1 MiB、QD16 顺序读取/写入各自全程平均 MB/s，不取瞬时峰值，不混入随机和缓存后速度。自动完整报告保留11项；历史/部分报告如需重导出，先按实际质量与已有测量说明范围，不能补造缺项。
 - 相对主控：准确芯片型号的官方 device 顺序速度额定值；没有时可用内置准确芯片的官方信号能力换算，并标明 signal 性质。不把不明芯片套为相近芯片。控制器是硬盘盒桥接主控；内置路径无该独立部件时不捏造一个。
 - 相对接口：目标盘已知链路段的最低信号/编码后上限。系统 reported 与 negotiated 的区别保留；缺失段可能使实际限制更低，不能把已知局部当完整路径证明。
 - 相对硬盘：准确型号、容量及硬件版本的厂商额定顺序读写值。不得用“PCIe 4.0 ×4”直接代替硬盘自身能力。参考包 `items` 使用原有 component/model/metric/value/unit/source_kind/relationship/conditions/source_url/source_label；metric 为 seq_read/seq_write 或 seq_read_q/seq_write_q，source_kind=official、relationship=device。相互冲突的值先研究核实，不擅自挑最好或最差值。
@@ -43,7 +45,7 @@
 
 `hardware_specs` 是可选官方规格列表，每条包含 component、model、interface、source_url、source_label、conditions。主控通过品牌盒确认时另含准确 enclosure_model。结构验证不验证网页事实，Agent 必须打开原始来源核实。
 
-研究沿用30天缓存刷新规则，但历史报告的星级基于当时记录的参考，不因当天过期而消失。软件不暗中联网，也不更改冻结投稿。既有 comparison/rating_bands 是旧按指标评价的兼容输入，不再支配新三维星级界面；旧原始测量和参考不会被删除。
+研究沿用30天缓存刷新规则，历史参考事实保留原查阅日期；当前显示星级仍须满足测量质量门，不能把未知历史背景当作quiet。软件不暗中联网，也不更改冻结投稿。既有 comparison/rating_bands 是旧按指标评价的兼容输入，不再支配新三维星级界面；旧原始测量和参考不会被删除。
 
 新的可选 `assessment.capabilities` 携带准确型号的 read_mb_s/write_mb_s、basis=signal/rated、来源/日期/条件；不携带客户端星级。接口参考来自公开 links 和标准。网站按数值重算，与本地方法一致，来源字段和自算hash不是真实性认证。旧投稿未含能力参考仍可阅读，已有确认芯片可使用网站自己的公开官方目录；不把当前电脑的信息补进旧稿。
 

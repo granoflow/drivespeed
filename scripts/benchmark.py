@@ -26,28 +26,28 @@ from system_io import (
     DeviceLock,
     check_target,
     ensure_fio,
-    find_fio,
     target_info,
     trash_owned,
     stop_process,
     unsafe_path_component,
+    observe_quality,
 )
 from workloads import (
     GIB,
     MIB,
     bandwidth_series,
-    byte_size,
     fio_arguments,
     json_objects,
     metrics,
-    plan,
     sustained_summary,
     cache_assessment,
-    cache_write_plan,
-    diagnostic_plan,
-    add_recovery,
     job_label,
+    auto_plan,
+    collection_status,
+    core_completeness,
+    case_core_missing,
 )
+from write_allowance import WriteAllowance, plan_hash
 
 
 def parser():
@@ -62,7 +62,6 @@ def parser():
         default="diskbench-results",
         help="New output directory, preferably on another volume",
     )
-    p.add_argument("--profile", choices=["quick", "full", "cache", "mapping", "integrity"], default="full")
     p.add_argument(
         "--language",
         default=language_default(),
@@ -103,20 +102,6 @@ def parser():
     )
     p.add_argument("--interface-name", help="User-confirmed host access-interface name; preserves system protocol and physical-device safety checks")
     p.add_argument(
-        "--cache-estimate-file",
-        help="Agent-researched cache planning JSON; see references/cache-planning.md",
-    )
-    p.add_argument("--recovery-seconds", type=int,
-                   help="Cache profile only: idle this long, then run an additional bounded 8 GiB write")
-    p.add_argument("--file-size", type=byte_size)
-    p.add_argument("--write-budget", type=byte_size)
-    p.add_argument("--seconds", type=int, help="Maximum seconds per ordinary test")
-    p.add_argument(
-        "--sustained-seconds",
-        type=int,
-        help="Maximum sustained write seconds; byte budget still applies",
-    )
-    p.add_argument(
         "--keep-test-files",
         action="store_true",
         help="Retain owned test files instead of moving to OS Trash",
@@ -127,6 +112,28 @@ def parser():
         help="Inspect only: no installation, network, test files or output writes",
     )
     return p
+
+
+def confirm_write(target, config, allowance, text=None):
+    digest = plan_hash(target, config, allowance)
+    print(json.dumps(dict(target=target["path"], physical_devices=target["physical_devices"],
+                          file_bytes=config["file_bytes"], max_write_bytes=config["max_write_bytes"],
+                          reserve_bytes=config["reserve_bytes"], max_runtime_seconds=config["max_runtime_seconds"],
+                          remaining_authorized_bytes=allowance["remaining"] if allowance["present"] else None,
+                          new_finite_allowance=not allowance["present"], plan_sha256=digest)), file=sys.stderr)
+    if sys.stdin.isatty():
+        answer = input((text or messages("en"))["confirm_write"])
+        confirmed = answer == "RUN"
+    else:
+        raw = sys.stdin.readline(1025)
+        try:
+            answer = json.loads(raw) if len(raw) <= 1024 else None
+        except ValueError:
+            answer = None
+        confirmed = answer == {"confirm_plan_sha256": digest}
+    if not confirmed:
+        raise BenchError("unsafe_target", "Write plan was not explicitly confirmed", 2)
+    return digest
 
 
 def save(path, value):
@@ -251,6 +258,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                         assessment = cache_assessment(cache_points)
                         if (
                             assessment["status"] == "observed_drop_stable"
+                            and written >= job.get("initialize_bytes", 0)
                             and cache_stop_requested is None
                             and platform.system() != "Windows"
                         ):
@@ -315,7 +323,8 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                 raise ValueError(
                     "Incomplete diagnostic coverage; refusing to claim a complete write/read verification"
                 )
-            if completed > job["io_bytes"] + job["bs"] * job["qd"]:
+            tolerance = 0 if config.get("method_version") == "drivespeed-auto-full-v1" else job["bs"] * job["qd"]
+            if completed > job["io_bytes"] + tolerance:
                 raise ValueError("Reported I/O exceeds the planned bound")
             case["status"] = "completed"
             if job.get("cache_test"):
@@ -347,29 +356,28 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                     pass
             case["metrics_complete"] = case["status"] == "completed"
             for path in output.glob(f"{job['name']}_bw.*.log"):
-                case["series"].extend(bandwidth_series(path))
+                try:
+                    case["series"].extend(bandwidth_series(path, strict=config.get("method_version") == "drivespeed-auto-full-v1"))
+                except (OSError, ValueError) as exc:
+                    case["collection_error"] = str(exc)
+            if config.get("method_version") == "drivespeed-auto-full-v1":
+                case["collection_status"] = collection_status(case)
+                missing = case_core_missing(case, job, config)
+                if missing and case["status"] == "completed":
+                    case.update(status="partial", reason="incomplete_measurement", metrics_complete=False)
+                    case["missing_core"] = missing
             save(output / f"{job['name']}.case.json", case)
     return case
 
 
 def execute(args, text, report_text):
-    config = plan(
-        args.profile,
-        args.file_size,
-        args.write_budget,
-        args.seconds,
-        args.sustained_seconds,
-    ) if args.profile in ("quick", "full", "cache") else None
     reference_data = (
         load_reference_data(args.reference_file) if args.reference_file else {}
     )
     target = target_info(args.target)
-    if args.recovery_seconds is not None and args.profile != "cache":
-        raise ValueError("--recovery-seconds requires --profile cache")
-    if args.profile in ("mapping", "integrity"):
-        config = diagnostic_plan(args.profile, target, args.file_size, args.write_budget,
-                                 args.seconds if args.seconds is not None else 30,
-                                 args.sustained_seconds if args.sustained_seconds is not None else 1800)
+    ledger = WriteAllowance()
+    allowance = ledger.read(target)
+    config = auto_plan(target["total_bytes"], target["free_bytes"], allowance["run_cap"], allowance["remaining"])
 
     current_hardware = collect_hardware(
         target,
@@ -392,63 +400,6 @@ def execute(args, text, report_text):
     elif cached:
         reference_data = cached
     apply_hardware_specs(current_hardware, reference_data)
-    if args.cache_estimate_file and args.profile != "cache":
-        raise ValueError("--cache-estimate-file is only used with --profile cache")
-    if args.profile == "cache":
-        estimate = (
-            json.loads(Path(args.cache_estimate_file).read_text(encoding="utf-8"))
-            if args.cache_estimate_file
-            else None
-        )
-        cache_planning = cache_write_plan(estimate)
-        if estimate:
-            current = current_hardware["drive"].get("model")
-            normalize = lambda value: "".join(
-                c.lower() for c in (value or "") if c.isalnum()
-            )
-            if not current or normalize(current) != normalize(estimate["drive_model"]):
-                raise ValueError(
-                    "Cache estimate does not match the currently detected drive model; research this drive or omit the estimate"
-                )
-        minimum_reserve = max(10 * GIB, int(target.get("total_bytes", 0) * 0.1))
-        available = max(0, target["free_bytes"] - minimum_reserve)
-        requested = (
-            args.file_size
-            if args.file_size is not None
-            else cache_planning["requested_bytes"]
-        )
-        size = (
-            requested
-            if args.file_size is not None
-            else min(requested, available, available / 1.25)
-        )
-        if args.write_budget is not None:
-            size = min(size, args.write_budget)
-        size = int(size // MIB) * MIB
-        config = plan(
-            "cache",
-            file_bytes=size,
-            write_budget=size,
-            sustained=args.sustained_seconds,
-        )
-        config["reserve_bytes"] = max(config["reserve_bytes"], minimum_reserve)
-        config["cache_planning"] = dict(
-            cache_planning,
-            effective_bytes=size,
-            limited_by_space_or_budget=size < requested,
-        )
-    if args.recovery_seconds is not None:
-        # An explicit user write cap covers both sustained and recovery writes.
-        extra = min(config["file_bytes"], 8 * GIB)
-        if args.write_budget is not None:
-            sustained_job = config["jobs"][0]
-            sustained_job["io_bytes"] = (args.write_budget - extra) // MIB * MIB
-            sustained_job["io_bytes"] = min(sustained_job["io_bytes"], config["file_bytes"])
-            if sustained_job["io_bytes"] < MIB:
-                raise ValueError("Write budget must cover sustained writing and recovery")
-            config["max_write_bytes"] = sustained_job["io_bytes"]
-            config["write_budget"] = sustained_job["io_bytes"]
-        add_recovery(config, args.recovery_seconds)
     text = dict(text)
     for job in config["jobs"]:
         text[job["name"]] = job_label(job, text)
@@ -464,7 +415,8 @@ def execute(args, text, report_text):
                     hardware=current_hardware,
                     reference_cache=reference_cache,
                     plan=config,
-                    fio=find_fio(),
+                    plan_sha256=plan_hash(target, config, allowance),
+                    write_authorization=allowance,
                     cleanup_policy="retain_owned_files" if args.keep_test_files or platform.system() == "Windows" else "system_trash",
                     language=args.language,
                     ui_language=args.ui_language,
@@ -493,8 +445,8 @@ def execute(args, text, report_text):
             os_family={"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system(), "unknown"),
             os_version=platform.mac_ver()[0] if platform.system() == "Darwin" else platform.release()
         ),
-        plan={**config, "profile": args.profile},
-        tool=dict(version="unknown", method_version="drivespeed-file-v1"),
+        plan=config,
+        tool=dict(version="unknown", method_version="drivespeed-auto-full-v1"),
         cases=[],
         series=[],
         outcome="failed",
@@ -521,6 +473,8 @@ def execute(args, text, report_text):
     progress.emit("inspect", "completed", 100, force=True)
     work = None
     error_code = 0
+    reserved = False
+    attempted = set()
     with DeviceLock(target):
         try:
             progress.emit("dependency", force=True)
@@ -534,7 +488,16 @@ def execute(args, text, report_text):
                 else None,
             )
             progress.emit("dependency", "completed", 100, force=True)
-            check_target(target, config["file_bytes"] + config["reserve_bytes"])
+            result["measurement_quality"] = observe_quality(target)
+            fresh = check_target(target, config["reserve_bytes"])
+            target.update(fresh)
+            config = auto_plan(fresh["total_bytes"], fresh["free_bytes"], allowance["run_cap"], allowance["remaining"])
+            result["plan"] = config
+            confirmed = confirm_write(target, config, allowance, text)
+            ledger.reserve(target, config, allowance, run_id, confirmed)
+            reserved = True
+            result["write_authorization"] = dict(plan_sha256=confirmed, reserved_bytes=config["max_write_bytes"])
+            check_target(target, config["file_bytes"] + config["reserve_bytes"] + config["metadata_headroom_bytes"])
             candidate = Path(target["path"]) / f".diskbench-{run_id}"
             candidate.mkdir(mode=0o700)
             work = candidate
@@ -550,6 +513,7 @@ def execute(args, text, report_text):
                 os.close(fd)
             for job in config["jobs"]:
                 progress.emit(job["name"], percent=0, force=True)
+                attempted.add(job["name"])
                 try:
                     case = run_case(
                         fio, job, config, engine, output, work, target, progress
@@ -574,7 +538,7 @@ def execute(args, text, report_text):
                 )
                 save(output / "results.json", result)
                 if case["status"] != "completed":
-                    error_code = 5
+                    error_code = 6 if case["status"] == "partial" else 5
                     break
             result["outcome"] = (
                 "complete"
@@ -589,7 +553,7 @@ def execute(args, text, report_text):
                 key=getattr(exc, "key", "run_failed"), detail=str(exc)
             )
             result["outcome"] = "partial" if result["cases"] else "failed"
-            error_code = getattr(exc, "code", 5)
+            error_code = exc.code if isinstance(exc, BenchError) else 5
             print(
                 text.get(getattr(exc, "key", "run_failed"), text["run_failed"])
                 + ": "
@@ -615,6 +579,7 @@ def execute(args, text, report_text):
             else:
                 progress.emit("cleanup", "skipped", force=True)
             done = {c["name"] for c in result["cases"]}
+            unreturned_attempt = bool(attempted - done)
             for job in config["jobs"]:
                 if job["name"] not in done:
                     result["cases"].append(
@@ -628,9 +593,10 @@ def execute(args, text, report_text):
             result["actual_write_bytes"] = (
                 result["accounted_write_bytes"]
                 if all(
-                    c.get("status") in ("completed", "skipped") for c in result["cases"]
+                    c.get("status") in ("completed", "skipped", "partial") for c in result["cases"]
                 )
                 and result["outcome"] != "cancelled"
+                and not unreturned_attempt
                 else None
             )
             sustained = next(
@@ -641,14 +607,13 @@ def execute(args, text, report_text):
             result["cache_assessment"]["stop_reason"] = sustained.get(
                 "stop_reason", "bounded_test"
             )
-            if (
-                args.profile == "cache"
-                and result["cache_assessment"]["status"] != "observed_drop_stable"
-            ):
+            result["completeness"] = core_completeness(result)
+            if not result["completeness"]["complete"]:
                 if result["outcome"] == "complete":
                     result["outcome"] = "partial"
-                    error_code = error_code or 6
-                result["notes"].append("cache_incomplete")
+                error_code = error_code or 6
+            if reserved:
+                ledger.settle(run_id, result["actual_write_bytes"])
             save(output / "results.json", result)
     from report import render_report
 
@@ -691,7 +656,7 @@ def main():
             f"{text.get(key, text['run_failed'])}: {exc}\n{text['recovery']}",
             file=sys.stderr,
         )
-        return getattr(exc, "code", 2 if isinstance(exc, ValueError) else 5)
+        return exc.code if isinstance(exc, BenchError) else (2 if isinstance(exc, ValueError) else 5)
     except KeyboardInterrupt:
         return 130
 

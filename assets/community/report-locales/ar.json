@@ -86,5 +86,9 @@
   "computer_model": "طراز الكمبيوتر",
   "controller_model": "طراز وحدة التحكم",
   "drive_model": "طراز القرص",
-  "matched": "حقول الطراز المتطابقة"
+  "matched": "حقول الطراز المتطابقة",
+  "measurement_quality": "ظروف القياس",
+  "value_quiet_observed": "لم يُرصد نشاط في نافذتين قبل الاختبار؛ ولا يضمن ذلك هدوء الاختبار كله",
+  "value_interference_observed": "رُصد نشاط من مصدر معروف قبل الاختبار",
+  "value_visibility_limited": "رؤية النشاط أو تحديد مصدره قبل الاختبار محدودان"
 }

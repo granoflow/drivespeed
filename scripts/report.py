@@ -69,6 +69,7 @@ def render_hardware_assessment(result, text):
             specs.append(f'<tr><th>{esc(text["controller_model"])}</th><td>{esc(chip["model"])} · {esc(chip["interface"])}</td><td><a href="{esc(chip["source_url"])}" rel="noreferrer">ASMedia</a> · {esc(catalog["checked_at"])}</td></tr>')
     spec_html = '<table><tbody>' + ''.join(specs) + '</tbody></table>' if specs else ''
     summary = component_summary(result)
+    quality_limited = summary['status'] == 'measurement_quality'
     rows = []
     for row in summary['rows']:
         label = text['util_' + row['component']]
@@ -78,18 +79,25 @@ def render_hardware_assessment(result, text):
             evidence.append(f'{esc(text["util_" + d["direction"]])} · QD16: {number(d["measured"])} / {number(d["bound"])} MB/s = {number(d["ratio"] * 100)}%')
         for ref in row['references']:
             if ref.get('source_url'):
+                if quality_limited:
+                    evidence.extend(f'{esc(text["util_" + direction])}: {number(ref[direction + "_mb_s"])} MB/s · {esc(text["util_" + ref["basis"]])}'
+                                    for direction in ('read', 'write') if ref.get(direction + '_mb_s') is not None)
                 evidence.append(f'<a href="{esc(ref["source_url"])}" rel="noreferrer">{esc(ref["source_label"])}</a> · {esc(ref["checked_on"])} · {esc(text["util_" + ref["basis"]])}<br>{esc(ref["conditions"])}')
-        rows.append(f'<tr><th>{esc(label)}</th><td>{grade}</td><td>{"<br>".join(evidence)}</td></tr>')
+        if quality_limited and not evidence:
+            continue
+        grade_cell = '' if quality_limited else f'<td>{grade}</td>'
+        rows.append(f'<tr><th>{esc(label)}</th>{grade_cell}<td>{"<br>".join(evidence)}</td></tr>')
     comment = text['util_comment_' + summary['status']]
     if summary['bottleneck']:
         comment = comment.replace('{component}', text['util_name_' + summary['bottleneck']])
+    rating_table = f'<table class="performance-ratings"><tbody>{"".join(rows)}</tbody></table>' if rows else ''
     catalog_rows = []
     for item in catalog['items']:
         link = dict(item, lanes=4) if item['kind'] == 'pcie' else item
         fact = link_reference(link)
         catalog_rows.append(f'<tr><th>{esc(fact["label"])}</th><td>{number(fact["mb_s"])} MB/s · {esc(text["link_" + fact["basis"]])}</td><td><a href="{esc(fact["source_url"])}" rel="noreferrer">{esc(text["rating_source"])}</a></td></tr>')
     return (f'<section id="hardware-assessment"><h2>{esc(text["hardware_assessment"])}</h2><p>{esc(text["link_scope"])}</p>{links}{spec_html}'
-            f'<h3>{esc(text["util_title"])}</h3><table class="performance-ratings"><tbody>{"".join(rows)}</tbody></table><p class="component-comment">{esc(comment)}</p><p>{esc(text["util_scope"])}</p>'
+            f'<h3>{esc(text["util_title"])}</h3>{rating_table}<p class="component-comment">{esc(comment)}</p><p>{esc(text["util_scope"])}</p>'
             f'<details><summary>{esc(text["interface_catalog"])}</summary><p>{esc(text["link_scope"])} · {esc(catalog["checked_at"])}</p><table><tbody>{"".join(catalog_rows)}</tbody></table></details></section>')
 
 
@@ -805,19 +813,20 @@ def render_report(result, output, language, text, requested_format="html", compa
             )
         )
     cache_bytes = assessment.get("cache_capacity_estimate_bytes")
-    cards.insert(
-        min(2, len(cards)),
-        card(
-            text["cache_capacity"] + "*",
-            number(cache_bytes / 1_073_741_824)
-            if cache_bytes is not None
-            else text["cache_pending"],
-            "cache_capacity_estimate_bytes",
-            "GiB" if cache_bytes is not None else "",
-            "measured_estimate" if cache_bytes is not None else "not_measured",
-            note=render_cache_reference(result, assessment, text),
-        ),
-    )
+    if cache_bytes is not None or result.get("tool", {}).get("method_version") != "drivespeed-auto-full-v1":
+        cards.insert(
+            min(2, len(cards)),
+            card(
+                text["cache_capacity"] + "*",
+                number(cache_bytes / 1_073_741_824)
+                if cache_bytes is not None
+                else text["cache_pending"],
+                "cache_capacity_estimate_bytes",
+                "GiB" if cache_bytes is not None else "",
+                "measured_estimate" if cache_bytes is not None else "not_measured",
+                note=render_cache_reference(result, assessment, text),
+            ),
+        )
     show_status = any(case.get("status") != "completed" for case in cases)
     show_reason = any(case.get("reason") for case in cases)
     rows = []
@@ -843,6 +852,7 @@ def render_report(result, output, language, text, requested_format="html", compa
                 text[direction],
                 number(m.get("mb_s")),
                 number(m.get("iops")),
+                number(lat.get("mean")),
                 " / ".join(number(lat.get(p)) for p in ("50", "95", "99")),
             ]
             if show_status:
@@ -858,7 +868,7 @@ def render_report(result, output, language, text, requested_format="html", compa
                 "<tr>"
                 + "".join(
                     f'<td dir="ltr">{esc(value)}</td>'
-                    if numeric_start <= index < numeric_start + 3
+                    if numeric_start <= index < numeric_start + 4
                     else f"<td>{esc(value)}</td>"
                     for index, value in enumerate(cells)
                 )
@@ -869,6 +879,7 @@ def render_report(result, output, language, text, requested_format="html", compa
         text["read"] + " / " + text["write"],
         "MB/s",
         "IOPS",
+        text["mean_latency"],
         text["latency"],
     ]
     if show_status:
@@ -944,6 +955,8 @@ def render_report(result, output, language, text, requested_format="html", compa
         )
     cache_html = f'<div id="cache-assessment" data-status="{esc(cache_state)}"><p class="notice">{esc(text[cache_label])}</p><dl>{"".join(cache_metrics)}</dl></div>'
     metadata = []
+    quality = result.get("measurement_quality", {}).get("status", "unknown")
+    metadata.append(f'<div class="metric-line metadata-quality"><dt>{esc(text["measurement_quality"])}</dt><dd>{esc(text.get("quality_" + quality, text["quality_unknown"]))}</dd></div>')
     for key, label in [
         ("total_bytes", "capacity"),
         ("free_bytes", "free_space"),
@@ -1079,7 +1092,7 @@ def render_report(result, output, language, text, requested_format="html", compa
         else ""
     )
     long_summary_html = f'''<h2 class="group-title">{esc(text["long_group"])}</h2><p class="group-caption">QD {esc(sustained_case.get("qd", "—"))} · {number(sustained_case.get("metrics", {}).get("runtime_ms", 0) / 1000)} s</p>
-<dl class="cards long-cards">{"".join(cards)}</dl><div class="summary-notes"><p>* {esc(text["cache_summary_note"])}</p></div>''' if result.get('plan', {}).get('profile') not in ('mapping', 'integrity') else ''
+{('<dl class="cards long-cards">' + "".join(cards) + '</dl><div class="summary-notes"><p>* ' + esc(text["cache_summary_note"]) + '</p></div>') if cards else '<p class="notice">' + esc(text[cache_label]) + '</p>'}''' if result.get('plan', {}).get('profile') not in ('mapping', 'integrity') else ''
     sustained_html = f'''<section id="sustained"><h2>{esc(text["sustained"])}</h2><p class="muted" id="tail-speed-note">{esc(text["tail_explanation"])}</p><div class="sustained-grid"><div>{chart(series, text)}</div><dl>{"".join(lines)}</dl></div>{cache_html}</section>''' if result.get('plan', {}).get('profile') not in ('mapping', 'integrity') else ''
     drive = hardware.get("drive", {})
     object_line = str(drive.get("matching_model") or drive.get("model") or text["unknown"])+" · "+text.get("scope_"+str(target.get("scope")),text["unknown"])
@@ -1087,6 +1100,7 @@ def render_report(result, output, language, text, requested_format="html", compa
 <html lang="{esc(language)}" dir="{direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{esc(text["title"])}</title><style>{css}</style></head><body><main>
 <header><div><h1>{esc(text["title"])}</h1><p>{esc(object_line)}</p><p class="run-meta"><time datetime="{esc(created)}">{esc(created_display)}</time><span>{esc(status)} · {len(completed)}/{len(cases)}</span></p></div><button type="button" title="{esc(text["print_hint"])}" onclick="window.print()">{esc(text["download"])}</button></header>
 {sample}
+{('<p class="notice">' + esc(text['core_incomplete']) + '</p>') if result.get('completeness', {}).get('complete') is False else ''}
 {('<h2 class="group-title">' + esc(text["short_group"]) + '</h2><p class="group-caption">' + esc(text["short_group_note"]) + '</p><dl class="cards short-cards">' + "".join(short_cards) + '</dl>') if short_cards else ''}
 {long_summary_html}
 {render_diagnostics(result, text)}
@@ -1103,8 +1117,8 @@ def render_report(result, output, language, text, requested_format="html", compa
 <details id="environment"><summary>{esc(text["environment"])}</summary><dl class="metadata">{"".join(metadata)}{environment_html}</dl>{depth_table}</details>
 <div class="report-ending"><details id="method"><summary>{esc(text["method"])}</summary><p>{esc(text["method_text"])}</p><p>{esc(text["window_method"])}</p><p>{esc(text["sensors_limit"])}</p>{cache_method}<div class="table-wrap">{config_table}</div></details>
 {('<aside class="run-notes">' + "".join(f"<p>{esc(n)}</p>" for n in notes) + "</aside>") if notes else ""}
-{agent_usage_html()}
-<footer><div class="footer-content"><div class="project">{project_html}</div>{promotion_html}</div><p class="privacy">{esc(text["privacy"])} {esc(text["raw"])}</p></footer></div>
+<div class="report-closing">{agent_usage_html()}
+<footer><div class="footer-content"><div class="project">{project_html}</div>{promotion_html}</div><p class="privacy">{esc(text["privacy"])} {esc(text["raw"])}</p></footer></div></div>
 </main><script>
 const collapsedForPrint = [];
 window.addEventListener('beforeprint', () => {{

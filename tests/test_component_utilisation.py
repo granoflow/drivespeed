@@ -44,6 +44,7 @@ class ComponentUtilisationTests(unittest.TestCase):
 
     def test_official_exact_capability_and_valid_workload_required(self):
         fixture=hardware_tests.HardwareRatingTests().fixture();fixture['cases']=[]
+        fixture['measurement_quality']={'status':'quiet_observed'}
         for direction,value in [('read',2200),('write',2000)]:
             fixture['cases'].append(dict(name='seq_'+direction+'_q',rw=direction,qd=16,bs=1048576,status='completed',metrics_complete=True,metrics={direction:dict(mb_s=value)}))
         ref=fixture['references']['items'][0]

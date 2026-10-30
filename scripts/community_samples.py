@@ -2,7 +2,7 @@
 
 from community_data import POLICY, digest, normalise_payload, validate_payload
 from agent_usage import agent_usage
-from community_store import FIELDS, CASE_FIELDS, CASE_TYPES, _value, _assign
+from community_store import FIELDS, CASE_FIELDS, CASE_TYPES, _value, _assign, write_quality, read_quality
 
 
 def schema(db):
@@ -46,6 +46,7 @@ def schema(db):
 
 
 def replace(db, parent, items):
+    db.execute('DELETE FROM measurement_quality WHERE owner_id=? AND report_id<>?', (parent,parent))
     db.execute('DELETE FROM assessment_presence WHERE owner_id=? AND report_id<>?', (parent,parent))
     db.execute("DELETE FROM samples WHERE parent_id=?", (parent,))
     for ordinal, item in enumerate(items):
@@ -73,6 +74,7 @@ def replace(db, parent, items):
                 db.execute("INSERT INTO sample_depth VALUES(?,?,?,?,?,?)", (parent, remote, index, sample, point["depth"], point["percent"]))
         from community_assessment import write
         write(db, parent, remote, payload.get('assessment'))
+        write_quality(db, parent, remote, payload.get("quality"))
 
 
 def read(db, parent):
@@ -101,6 +103,9 @@ def read(db, parent):
         assessment = read_assessment(db,parent,remote)
         if assessment is not None:
             payload['assessment'] = assessment
+        quality = read_quality(db, parent, remote)
+        if quality is not None:
+            payload["quality"] = quality
         validate_payload(payload)
         if not hmac.compare_digest(digest(payload), row["expected_hash"]):
             raise CommunityError("integrity_mismatch")

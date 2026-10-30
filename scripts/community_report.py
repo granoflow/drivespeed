@@ -55,6 +55,7 @@ def _values(local, case):
     return {"scope": local["storage"]["scope"], **local["storage"], "os_family": local["environment"]["os"],
             **{k: local["environment"][k] for k in ("os_version", "architecture", "ioengine")},
             **local["plan"], "method_version": local["tool"]["method_version"],
+            "measurement_quality": local.get("quality", {}).get("status"),
             **{"case_"+key: value for key,value in case.items() if key in ("name", "rw", "bs_bytes", "qd", "numjobs", "runtime_limit_seconds", "rwmixread", "status")}}
 
 
@@ -92,6 +93,7 @@ def _differences(source, local, case, text):
     from report import esc
     a = _values(local, case)
     b = dict(source["conditions"])
+    b.setdefault("measurement_quality", None)
     b.update({"case_"+key: value for key,value in source["workload"].items()})
     rows = []
     for difference in source["differences"]:
@@ -137,13 +139,13 @@ def render_comparison(facts, result, output, language, report_text, requested_fo
             values = " · ".join(esc(text["metric_"+key])+": "+number(source["values"][key]) for key in METRICS if source["values"].get(key) is not None)
             matched = " / ".join(text[kind+"_model"] for kind in source["matched_on"] if kind != "computer")
             references.append(f'<article class="comparison-source"><p><a href="{esc(url)}" rel="noopener noreferrer"><bdi>{esc(source["sample_id"])}</bdi></a> · <a href="{esc(profile)}" rel="noopener noreferrer"><bdi>X @{esc(profile.rsplit("/",1)[1])}</bdi></a> · <time>{esc(source["tested_on"])}</time></p><p>{esc(source["drive_model"] or text["unknown"])} · {esc(text["unverified"])}</p><p>{esc(text["matched"])}: {esc(matched or text["unknown"])}</p><p class="comparison-example">{values or esc(text["no_statistic"])}</p>'+_differences(source,local,case,text)+"</article>")
-        workload = f'{text["case_bs_bytes"]}: {case["bs_bytes"]:,} B · QD{case["qd"]} · {case["numjobs"]} {text["jobs"]} · {case["runtime_limit_seconds"]} s'
+        workload = f'{text["case_bs_bytes"]}: {case["bs_bytes"]:,} B · QD{case["qd"]} · {case["numjobs"]} {text["jobs"]} · {text["case_runtime_limit_seconds"]}: {case["runtime_limit_seconds"]}'
         case_label = report_text.get(group["case_name"], group["case_name"])
         state = report_text.get(case["status"],case["status"])
         sections.append(f'<section class="comparison-group"><h2>{esc(case_label)} · {esc(report_text[group["direction"]])} · {esc(state)}</h2><p>{esc(workload)}</p><div class="table-wrap"><table class="comparison-metrics"><thead><tr><th>{esc(text["metric"])}</th><th>{esc(text["local"])}</th><th>{esc(text["median"])}</th><th>{esc(text["delta"])}</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div><p>{esc(text["threshold"])}</p><h3>{esc(text["sources"])}</h3>{"".join(references) or "<p>"+esc(text["no_sources"])+"</p>"}</section>')
     context = _values(local, {})
     condition_rows = "".join(f'<div class="metric-line"><dt>{esc(text[key])}</dt><dd>{_display(context.get(key),text)}</dd></div>' for key in
-        ("scope", "capacity_bytes", "connection", "negotiated_bps", "filesystem", "free_percent", "os_family", "os_version", "ioengine", "profile", "file_bytes", "write_budget_bytes", "seconds", "sustained_seconds"))
+        ("scope", "capacity_bytes", "connection", "negotiated_bps", "filesystem", "free_percent", "os_family", "os_version", "ioengine", "profile", "file_bytes", "write_budget_bytes", "seconds", "sustained_seconds", "method_version", "measurement_quality"))
     model_rows = "".join(f'<div class="metric-line"><dt>{esc(text[kind+"_model"])}</dt><dd>{esc(local["hardware"][kind]["model"] or text["unknown"])}</dd></div>' for kind in (("computer","controller","drive") if show_computer_model else ("controller","drive")))
     css = (Path(__file__).resolve().parents[1]/"assets/report.css").read_text()
     direction = "rtl" if language.split("-")[0] == "ar" else "ltr"

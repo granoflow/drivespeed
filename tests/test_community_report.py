@@ -22,6 +22,7 @@ class ReportTests(unittest.TestCase):
     def setUp(self):
         self.store = CommunityStore(state_dir()); self.result = local_result(); self.result.pop("user_input",None)
         self.result["synthetic"] = True; self.result["target"]["negotiated_bps"] = 10_000_000_000
+        self.result["measurement_quality"] = {"status": "quiet_observed"}  # Explicit fixture condition, not historical backfill.
         p = project_result(self.result,"https://x.com/fixture_user",submission_id=ID)
         self.store.create(p,self.result["run_id"],"fixture-only-result")
         self.local = self.store.payload(ID)

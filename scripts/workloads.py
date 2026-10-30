@@ -224,6 +224,40 @@ def plan(profile, file_bytes=None, write_budget=None, seconds=None, sustained=No
     return config
 
 
+def auto_plan(total_bytes, free_bytes, run_cap, remaining_cap):
+    """Freeze a bounded full plan; authorization is supplied by the write ledger."""
+    for value in (total_bytes, free_bytes, run_cap, remaining_cap):
+        if type(value) is not int or not 0 <= value <= 2**64 - 1:
+            raise ValueError("Capacity and authorized byte limits must be uint64 integers")
+    if not total_bytes or free_bytes > total_bytes:
+        raise ValueError("Invalid target capacity")
+    budget = min(64 * GIB, run_cap, remaining_cap)
+    reserve = max(10 * GIB, (total_bytes + 9) // 10)
+    available = max(0, free_bytes - reserve - 64 * MIB)
+    size = min(8 * GIB, (4 * available) // 5, budget // 4) // MIB * MIB
+    if size < GIB or budget < 8 * GIB:
+        raise ValueError("Insufficient free space or authorized bytes for a complete test")
+    ordinary = min(size, budget // 20) // MIB * MIB
+    sustained = (budget - 5 * ordinary) // MIB * MIB
+    if sustained < size:
+        raise ValueError("Write allowance cannot initialize the working file")
+    # Reuse the established workload identities, block sizes and queue depths.
+    config = plan("full", size, budget, 30, 1800)
+    jobs = [job for job in config["jobs"] if job["name"] != "prepare"]
+    for job in jobs:
+        job["io_bytes"] = size if job["rw"] in ("read", "randread") else ordinary
+    first = next(job for job in jobs if job["name"] == "sustained")
+    first.update(io_bytes=sustained, cache_test=True, initialize_bytes=size)
+    jobs = [first] + [job for job in jobs if job is not first]
+    config.update(
+        profile="full", method_version="drivespeed-auto-full-v1", jobs=jobs,
+        reserve_bytes=reserve, metadata_headroom_bytes=64 * MIB,
+        max_write_bytes=sustained + 5 * ordinary,
+        max_runtime_seconds=sum(job["runtime"] + 45 for job in jobs),
+    )
+    return config
+
+
 def diagnostic_plan(profile, target, file_bytes=None, write_budget=None, seconds=30,
                     duration=1800):
     """Opt-in file-based diagnostics. Existing quick/full/cache defaults stay unchanged."""
@@ -363,8 +397,13 @@ def metrics(snapshot):
             raise ValueError("fio byte counter overflow")
         latency = item.get("clat_ns", {})
         percentiles = latency.get("percentile", {})
+        numeric = [item.get("bw_bytes", item.get("bw", 0)), item.get("iops", 0),
+                   latency.get("mean"), *(percentiles.get(f"{float(p):.6f}") for p in ("50", "95", "99"))]
+        if any(value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0) for value in numeric):
+            raise ValueError("Invalid fio throughput or completion latency")
         result[direction] = dict(
             bytes=count,
+            runtime_ms=item.get("runtime") if item.get("runtime") is not None else (runtimes[0] or 0),
             mb_s=item.get("bw_bytes", item.get("bw", 0) * 1024) / 1_000_000,
             iops=item.get("iops", 0),
             latency_us={
@@ -374,19 +413,23 @@ def metrics(snapshot):
                 for p in ("50", "95", "99")
             },
         )
+        result[direction]["latency_us"]["mean"] = (
+            latency["mean"] / 1000 if latency.get("mean") is not None else None
+        )
     result["achieved_depth"] = job.get("iodepth_level", {})
     result["runtime_ms"] = runtimes[0] or max(value or 0 for value in runtimes[1:])
     return result
 
 
-def bandwidth_series(path):
+def bandwidth_series(path, strict=False):
     rows = []
     for line in path.read_text(encoding="utf-8").splitlines():
         parts = line.split(",")
+        valid = False
         if len(parts) >= 3:
             try:
                 t, kib, direction = float(parts[0]), float(parts[1]), int(parts[2])
-                if all(math.isfinite(v) and v >= 0 for v in (t, kib)):
+                if direction in (0, 1) and all(math.isfinite(v) and v >= 0 for v in (t, kib)):
                     rows.append(
                         dict(
                             seconds=t / 1000,
@@ -394,9 +437,124 @@ def bandwidth_series(path):
                             direction="read" if direction == 0 else "write",
                         )
                     )
+                    valid = True
             except ValueError:
-                continue
+                pass
+        if strict and line.strip() and not valid:
+            raise ValueError("Malformed fio bandwidth sample")
     return rows
+
+
+def collection_status(case):
+    """Do not confuse a legal subsecond byte endpoint with missing collection."""
+    data = case.get("metrics", {})
+    if not isinstance(data, dict):
+        return "collection_incomplete"
+    runtime_ms = data.get("runtime_ms", 0)
+    if type(runtime_ms) is not int or runtime_ms <= 0:
+        return "collection_incomplete"
+    active = ("read", "write") if case.get("rw") == "randrw" else (
+        "read" if case.get("rw") in ("read", "randread") else "write",
+    )
+    if case.get("collection_error"):
+        return "collection_incomplete"
+    durations = []
+    for direction in active:
+        if not isinstance(data.get(direction), dict):
+            return "collection_incomplete"
+        active_runtime = data[direction].get("runtime_ms", runtime_ms)
+        if type(active_runtime) is not int or active_runtime <= 0:
+            return "collection_incomplete"
+        direction_seconds = active_runtime / 1000
+        durations.append(direction_seconds)
+        points = [p for p in case.get("series", []) if p.get("direction") == direction]
+        times = [p.get("seconds") for p in points]
+        if any(type(t) not in (int, float) or not math.isfinite(t) or t <= 0 for t in times):
+            return "collection_incomplete"
+        if any(type(p.get("mb_s")) not in (int, float) or not math.isfinite(p["mb_s"]) or p["mb_s"] < 0 for p in points):
+            return "collection_incomplete"
+        if times and times[-1] > direction_seconds + .05:
+            return "collection_incomplete"
+        if direction_seconds >= 1 and (not times or len(times) < int(direction_seconds)
+                             or times[0] > 2 or direction_seconds - times[-1] > 1.05):
+            return "collection_incomplete"
+        if any(not 0 < b - a <= 2 for a, b in zip(times, times[1:])):
+            return "collection_incomplete"
+    return "short_window" if max(durations) < 1 else "collected"
+
+
+def case_core_missing(case, job, config):
+    """Qualification shared by the runner and offline public projection."""
+    name, missing = job["name"], []
+    if any(case.get(k) != job[k] for k in ("rw", "bs", "qd")):
+        missing.append(f"{name}.workload")
+    if case.get("status") != "completed":
+        missing.append(f"{name}.status")
+    data = case.get("metrics", {})
+    if not isinstance(data, dict):
+        return [f"{name}.metrics"]
+    if any(not isinstance(data.get(direction, {}), dict) for direction in ("read", "write")):
+        return [f"{name}.directions"]
+    if type(data.get("runtime_ms")) is not int or data["runtime_ms"] <= 0:
+        missing.append(f"{name}.runtime_ms")
+    if collection_status(case) == "collection_incomplete":
+        missing.append(f"{name}.collection")
+    directions = ("read", "write") if job["rw"] == "randrw" else (
+        "read" if job["rw"] in ("read", "randread") else "write",
+    )
+    for direction in directions:
+        item = data.get(direction, {})
+        if not isinstance(item, dict):
+            missing.append(f"{name}.{direction}")
+            continue
+        if not isinstance(item.get("latency_us", {}), dict):
+            missing.append(f"{name}.{direction}.latency_us")
+            continue
+        if type(item.get("bytes")) is not int or item["bytes"] <= 0:
+            missing.append(f"{name}.{direction}.bytes")
+        for field, value in [(k, item.get(k)) for k in ("mb_s", "iops")] + [
+            (f"latency_us.{k}", item.get("latency_us", {}).get(k)) for k in ("mean", "50", "95", "99")
+        ]:
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0 or (field in ("mb_s", "iops") and not value):
+                missing.append(f"{name}.{direction}.{field}")
+    if name == "sustained":
+        written = data.get("write", {}).get("bytes", 0)
+        if type(written) is not int:
+            written = 0
+        if written < config.get("file_bytes", 0):
+            missing.append("sustained.initialization")
+        if written < job["io_bytes"] and not (
+            case.get("stop_reason") == "post_drop_stable"
+            and cache_assessment(case.get("series", []))["status"] == "observed_drop_stable"
+        ):
+            missing.append("sustained.endpoint")
+    transferred = sum(data.get(d, {}).get("bytes", 0) for d in ("read", "write")
+                      if type(data.get(d, {}).get("bytes", 0)) is int)
+    if transferred > job["io_bytes"]:
+        missing.append(f"{name}.io_bound")
+    if name != "sustained" and transferred < job["io_bytes"] and (
+        type(data.get("runtime_ms")) is not int or data["runtime_ms"] < job["runtime"] * 1000
+    ):
+        missing.append(f"{name}.endpoint")
+    return missing
+
+
+def core_completeness(result):
+    """Derive the new method's core qualification from measurements, never a flag."""
+    config = result.get("plan", {})
+    expected = {j["name"]: j for j in config.get("jobs", [])}
+    missing, seen = [], set()
+    if len(expected) != 11:
+        missing.append("plan.jobs")
+    for case in result.get("cases", []):
+        name = case.get("name")
+        if name not in expected or name in seen:
+            missing.append(f"{name}.identity")
+            continue
+        seen.add(name)
+        missing.extend(case_core_missing(case, expected[name], config))
+    missing.extend(f"{name}.missing" for name in expected.keys() - seen)
+    return dict(complete=not missing, missing_core=sorted(missing))
 
 
 def sustained_summary(points):

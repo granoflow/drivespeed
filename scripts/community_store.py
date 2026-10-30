@@ -51,6 +51,16 @@ def _assign(data, path, value):
     data[parts[-1]] = value
 
 
+def write_quality(db, owner, report, quality):
+    if quality is not None:
+        db.execute("INSERT INTO measurement_quality VALUES(?,?,?)", (owner, report, quality["status"]))
+
+
+def read_quality(db, owner, report):
+    row = db.execute("SELECT status FROM measurement_quality WHERE owner_id=? AND report_id=?", (owner, report)).fetchone()
+    return {"status": row[0]} if row is not None else None
+
+
 class CommunityStore:
     def __init__(self, directory=None):
         self._windows_state = None
@@ -177,6 +187,10 @@ class CommunityStore:
             PRAGMA user_version=1;
         """)
         from community_samples import schema
+        self.db.execute("""CREATE TABLE IF NOT EXISTS measurement_quality(
+            owner_id TEXT REFERENCES reports(id) ON DELETE CASCADE,report_id TEXT,status TEXT NOT NULL
+            CHECK(status IN ('quiet_observed','interference_observed','visibility_limited')),
+            PRIMARY KEY(owner_id,report_id))""")
         schema(self.db)
         from community_comparison import schema as comparison_schema
         comparison_schema(self.db)
@@ -296,6 +310,7 @@ class CommunityStore:
                         self.db.execute("INSERT INTO depth_samples VALUES (?,?,?,?,?)", (identifier, ordinal, sample, point["depth"], point["percent"]))
                 from community_assessment import write
                 write(self.db, identifier, identifier, payload.get('assessment'))
+                write_quality(self.db, identifier, identifier, payload.get("quality"))
         except sqlite3.IntegrityError:
             raise CommunityError("content_conflict") from None
         return identifier
@@ -336,6 +351,9 @@ class CommunityStore:
             assessment = read(self.db, identifier, identifier)
             if assessment is not None:
                 payload['assessment'] = assessment
+            quality = read_quality(self.db, identifier, identifier)
+            if quality is not None:
+                payload["quality"] = quality
         validate_payload(payload)
         if not hmac.compare_digest(digest(payload), row["expected_hash"]):
             raise CommunityError("integrity_mismatch")

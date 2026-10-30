@@ -92,6 +92,9 @@ def performance_ratings(result, today=None):
         if not positive(value):
             continue
         row['measured'] = value
+        if result.get('tool', {}).get('method_version') == 'drivespeed-auto-full-v1' and result.get('measurement_quality', {}).get('status') != 'quiet_observed':
+            row['reason'] = 'measurement_quality'
+            continue
         context = comparison_context(result, case)
         row['reason'] = 'conditions_unknown' if context is None else 'reference_missing'
         if context is None:
@@ -205,4 +208,9 @@ def component_summary(result):
                     and c.get('bs') == 1048576 and c.get('rw') == direction):
                 measured[direction] = c.get('metrics', {}).get(direction, {}).get('mb_s')
     bounds = [f['mb_s'] for link in result.get('hardware', {}).get('links', []) if (f := link_reference(link))]
-    return utilisation_summary(measured, component_capabilities(result), bounds, result.get('target', {}).get('scope') == 'physical')
+    quiet = result.get('measurement_quality', {}).get('status') == 'quiet_observed'
+    summary = utilisation_summary(measured, component_capabilities(result), bounds, quiet and result.get('target', {}).get('scope') == 'physical')
+    if not quiet:
+        summary['status'] = 'measurement_quality'
+        summary['bottleneck'] = None
+    return summary

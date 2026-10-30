@@ -156,7 +156,8 @@ class HardwareRatingTests(unittest.TestCase):
             self.assertNotIn('4/5',html);self.assertIn('&lt;script&gt;',html);self.assertNotIn('<script>unsafe',html)
             self.assertIn('https://www.asmedia.com.tw/',html)
         source=report.render_hardware_assessment({},messages('zh-CN'))
-        self.assertNotIn('无法评分',source);self.assertIn('待补充依据',source)
+        self.assertNotIn('无法评分',source);self.assertIn('测量背景未记录或存在干扰',source)
+        self.assertNotIn('class="performance-ratings"',source)
 
     def test_windows_model_contains_no_unique_identifiers(self):
         raw=json.dumps({'Manufacturer':'Vendor','Model':'Model','SerialNumber':'SECRET'}).encode()
@@ -171,7 +172,8 @@ class HardwareRatingTests(unittest.TestCase):
             path=Path(tmp)/'references.json';path.write_text(json.dumps(refs))
             args=benchmark.parser().parse_args(['--target',tmp,'--reference-file',str(path),'--dry-run'])
             output=io.StringIO()
-            with patch.object(benchmark,'target_info',return_value=result['target']), patch.object(benchmark,'collect_hardware',return_value=hw), patch.object(benchmark,'load_reference_cache',return_value=(None,{})), patch.object(benchmark,'ensure_fio') as install, contextlib.redirect_stdout(output):
+            result['target'].update(path=tmp,st_dev=1,inode=2,device='fixture-volume',physical_devices=['fixture-disk'])
+            with patch.object(benchmark,'target_info',return_value=result['target']), patch.object(benchmark,'collect_hardware',return_value=hw), patch.object(benchmark,'load_reference_cache',return_value=(None,{})), patch.object(benchmark.WriteAllowance,'read',return_value=dict(present=False,scope_id=None,revision=0,run_cap=64*1024**3,remaining=64*1024**3)), patch.object(benchmark,'ensure_fio') as install, contextlib.redirect_stdout(output):
                 self.assertEqual(benchmark.execute(args,messages('en'),messages('en')),0)
             install.assert_not_called()
             self.assertEqual(json.loads(output.getvalue())['hardware']['controller']['source'],'reference')

@@ -74,6 +74,9 @@ summary { cursor: pointer; margin-bottom: 0; }
 details[open] > summary { margin-bottom: 20px; }
 details p { font-size: 13px; }
 .metadata { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; }
+.metadata-quality { grid-column: 1 / -1; }
+.metadata-quality dt { flex-shrink: 0; }
+.metadata-quality dd { flex-shrink: 1; overflow-wrap: anywhere; direction: inherit; }
 pre { direction: ltr; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; color: #526579; }
 .run-notes { font-size: 13px; padding: 0 4px; }
 footer { margin-top: 32px; color: #526579; font-size: 14px; }
@@ -228,6 +231,7 @@ html[dir="rtl"] .cache-reference, html[dir="rtl"] .card .notice { direction: rtl
   body:not(.community-report) .metric-guide { gap: 12px 24px; margin-block: 14px; }
   body:not(.community-report) footer { break-inside: avoid; margin-top: 8px; }
   body:not(.community-report) .report-ending { break-inside: avoid; }
+  body:not(.community-report) .report-closing { break-inside: avoid; }
   body:not(.community-report) .footer-content { display: flex; justify-content: space-between; gap: 16px; border: 0; border-top: 1px solid #dbe4ee; border-radius: 0; padding-top: 6px; }
   body:not(.community-report) .project, body:not(.community-report) .promotion { padding: 0; border: 0; background: transparent; }
   body:not(.community-report) .project-name { font-size: 9pt; }

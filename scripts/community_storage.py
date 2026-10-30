@@ -290,16 +290,18 @@ class WindowsPrivateState:
                     _held_mutexes.remove(name)
 
     @contextmanager
-    def initialise(self):
+    def initialise(self, filename="community.sqlite3"):
+        if filename not in ("community.sqlite3", "write-allowance.sqlite3"):
+            raise CommunityError("unsafe_state_database")
         with self.lock("init", wait_ms=5000):
             try:
-                handle, created = self.api.open(ntpath.join(self.directory, "community.sqlite3"), create=True)
+                handle, created = self.api.open(ntpath.join(self.directory, filename), create=True)
                 self.handles.append(handle)
                 self.api.check_file(handle)
                 self.api.check_private(handle)
                 # Pre-existing SQLite sidecars must not bypass the private DB.
                 for suffix in ("-journal", "-wal", "-shm"):
-                    path = ntpath.join(self.directory, "community.sqlite3" + suffix)
+                    path = ntpath.join(self.directory, filename + suffix)
                     # GetFileAttributesW is only an existence hint; the handle
                     # below supplies all security/type checks without following links.
                     attrs = self.api.kernel.GetFileAttributesW

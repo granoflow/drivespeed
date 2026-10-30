@@ -71,6 +71,8 @@ def schema(db):
         except BaseException:
             db.rollback()
             raise
+    if "measurement_quality" not in {row[1] for row in db.execute("PRAGMA table_info(comparison_source_context)")}:
+        db.execute("ALTER TABLE comparison_source_context ADD COLUMN measurement_quality TEXT")
 
 
 def _write_budget(value):
@@ -117,6 +119,8 @@ def _conditions(local, sample):
                 differences.append(field)
     if local["tool"]["method_version"] != sample["tool"]["method_version"]:
         differences.append("method_version")
+    if any(payload.get("quality", {}).get("status") != "quiet_observed" for payload in (local, sample)):
+        differences.append("measurement_quality")
     if local["plan"]["profile"] in ("mapping", "integrity"):
         differences.append("diagnostic_profile_background_only")
     if not any(_model(local["hardware"][kind]["model"]) is not None and
@@ -176,9 +180,9 @@ def build_comparison(store, result, submission_id):
                     keys = (comparison_id, case_index, direction, record["id"])
                     store.db.execute("INSERT INTO comparison_sources VALUES(?,?,?,?,?,?,?,?,?,?,?)", (*keys, selected_index, record["url"], sample["tested_on"],
                         *(sample["hardware"][kind]["model"] for kind in ("computer", "controller", "drive")), int(not differences)))
-                    context = [*keys, *(_value(sample, field) for _,field,_ in CONDITIONS),
+                    context = [*keys, sample.get("quality", {}).get("status"), *(_value(sample, field) for _,field,_ in CONDITIONS),
                                *(selected[field] if selected else None for field,_ in WORKLOAD)]
-                    names = ["comparison_id", "case_index", "direction", "sample_id", *[name for name,_,_ in CONDITIONS],
+                    names = ["comparison_id", "case_index", "direction", "sample_id", "measurement_quality", *[name for name,_,_ in CONDITIONS],
                              *["case_"+name for name,_ in WORKLOAD]]
                     store.db.execute("INSERT INTO comparison_source_context("+",".join(names)+") VALUES("+",".join("?" for _ in context)+")", context)
                     for field in differences:
@@ -221,6 +225,8 @@ def read_comparison(store, comparison_id):
             item["values"] = {r[0]: r[1] for r in store.db.execute("SELECT metric,value FROM comparison_values WHERE comparison_id=? AND case_index=? AND direction=? AND sample_id=?", keys)}
             context = store.db.execute("SELECT * FROM comparison_source_context WHERE comparison_id=? AND case_index=? AND direction=? AND sample_id=?", keys).fetchone()
             item["conditions"] = {name: context[name] for name,_,_ in CONDITIONS} if context else None
+            if context and context["measurement_quality"] is not None:
+                item["conditions"]["measurement_quality"] = context["measurement_quality"]
             item["workload"] = {name: context["case_"+name] for name,_ in WORKLOAD} if context else None
             item["matched_on"] = [kind for kind in ("computer", "controller", "drive")
                 if _model(local["hardware"][kind]["model"]) is not None and

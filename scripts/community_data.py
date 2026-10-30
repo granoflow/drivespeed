@@ -194,6 +194,8 @@ def validate_payload(payload):
             _fail(f"cases[{index}].cache")
     if not completed:
         raise CommunityError("no_measurements")
+    if payload["tool"]["method_version"] == "drivespeed-auto-full-v1":
+        require_full_report(payload)
     return payload
 
 
@@ -258,7 +260,7 @@ def _number(value, field):
     return 0.0 if value == 0 else float(value)
 
 
-def _direction(metrics, direction):
+def _direction(metrics, direction, include_mean=False):
     source = metrics.get(direction, {})
     if not isinstance(source, dict):
         _fail("cases.metrics." + direction)
@@ -275,7 +277,7 @@ def _direction(metrics, direction):
         return {"bytes": 0, "mb_s": None, "iops": None, "latency_us": dict.fromkeys(("mean", "p50", "p95", "p99"))}
     return {"bytes": count, "mb_s": _number(source["mb_s"], "cases.metrics.mb_s") if source.get("mb_s") is not None else None,
             "iops": _number(source["iops"], "cases.metrics.iops") if source.get("iops") is not None else None,
-            "latency_us": {"mean": None, **{"p" + k: _number(latency[k], "cases.metrics.latency_us") if latency.get(k) is not None else None for k in ("50", "95", "99")}}}
+            "latency_us": {"mean": _number(latency["mean"], "cases.metrics.latency_us.mean") if include_mean and latency.get("mean") is not None else None, **{"p" + k: _number(latency[k], "cases.metrics.latency_us") if latency.get(k) is not None else None for k in ("50", "95", "99")}}}
 
 
 FULL_CASES = {
@@ -289,6 +291,9 @@ FULL_CASES = {
 
 
 def require_full_report(payload):
+    automatic = payload["tool"]["method_version"] == "drivespeed-auto-full-v1"
+    if automatic and payload.get("quality", {}).get("status") not in ("quiet_observed", "interference_observed", "visibility_limited"):
+        _fail("quality")
     if payload["plan"]["profile"] != "full" or payload["outcome"] != "completed":
         raise CommunityError("validation_failed", ["plan.profile", "outcome"])
     cases = payload["cases"]
@@ -302,6 +307,14 @@ def require_full_report(payload):
         if ((case["rw"], case["bs_bytes"], case["qd"]) != spec or case["status"] != "completed"
                 or measured <= 0):
             raise CommunityError("validation_failed", ["cases"])
+        if automatic:
+            directions = ("read", "write") if spec[0] == "randrw" else ("read" if spec[0] in ("read", "randread") else "write",)
+            if case["measurement_seconds"] <= 0:
+                _fail("cases.measurement_seconds")
+            for direction in directions:
+                item = case[direction]
+                if item["bytes"] <= 0 or any(item[k] is None or item[k] <= 0 for k in ("mb_s", "iops")) or any(value is None for value in item["latency_us"].values()):
+                    _fail("cases." + direction)
     return payload
 
 
@@ -327,8 +340,18 @@ def project_result(result, profile_url, intro="", submission_id=None):
         except ValueError:
             _fail("hardware.access_interface")
     instant = _timestamp(result.get("created"), "created")
-    if result.get("tool", {}).get("method_version") != "drivespeed-file-v1":
+    method = result.get("tool", {}).get("method_version")
+    if method not in ("drivespeed-file-v1", "drivespeed-auto-full-v1"):
         _fail("tool.method_version", "missing_parameters")
+    automatic = method == "drivespeed-auto-full-v1"
+    if automatic:
+        from workloads import core_completeness
+        try:
+            complete = core_completeness(result)
+        except (TypeError, KeyError, AttributeError, OverflowError):
+            _fail("cases")
+        if not complete["complete"]:
+            raise CommunityError("validation_failed", complete["missing_core"])
     profile = _required(plan, "profile", "plan")
     family = _required(env, "os_family", "environment")
     os_version = _required(env, "os_version", "environment")
@@ -383,8 +406,8 @@ def project_result(result, profile_url, intro="", submission_id=None):
                      "post_cache_mb_s": _number(assessed.get("post_cache_mb_s"), field + ".cache") if observed else None, "cause_confirmed": False}
         cases.append({"name": local.get("name"), "rw": local.get("rw"), "bs_bytes": numeric["bs"], "qd": numeric["qd"],
             "numjobs": numjobs, "runtime_limit_seconds": numeric["runtime"], "rwmixread": mix, "status": local.get("status"),
-            "measurement_seconds": _number(measurements.get("runtime_ms", 0), field + ".runtime_ms") / 1000, "read": _direction(measurements, "read"),
-            "write": _direction(measurements, "write"), "achieved_depth": depth, "cache": cache})
+            "measurement_seconds": _number(measurements.get("runtime_ms", 0), field + ".runtime_ms") / 1000, "read": _direction(measurements, "read", automatic),
+            "write": _direction(measurements, "write", automatic), "achieved_depth": depth, "cache": cache})
     if not cases:
         raise CommunityError("no_measurements")
     if len(engines) != 1 or env.get("engine") not in engines:
@@ -396,13 +419,15 @@ def project_result(result, profile_url, intro="", submission_id=None):
     free_percent = float(free / capacity * 100) if free is not None else None
     payload = {"schema_version": 1, "submission_id": submission_id or str(uuid.uuid4()), "tested_on": instant.date().isoformat(),
         "measured_at_device": instant.isoformat().replace("+00:00", "Z"),
-        "tool": {"version": result["tool"].get("version", "unknown"), "fio_version": env.get("fio", {}).get("version", "unknown"), "method_version": "drivespeed-file-v1"},
+        "tool": {"version": result["tool"].get("version", "unknown"), "fio_version": env.get("fio", {}).get("version", "unknown"), "method_version": method},
         "hardware": models, "storage": {"scope": _required(target, "scope", "target"), "capacity_bytes": capacity,
             "connection": connection, "negotiated_bps": target.get("negotiated_bps"), "filesystem": target.get("filesystem"), "free_percent": free_percent},
         "environment": {"os": family, "os_version": os_version, "architecture": env.get("architecture"), "ioengine": next(iter(engines)), "direct": True},
         "plan": {"profile": profile, "file_bytes": plan.get("file_bytes"), "write_budget_bytes": plan.get("write_budget"), "seconds": plan.get("seconds"), "sustained_seconds": plan.get("sustained")},
         "outcome": "completed" if result.get("outcome") == "complete" else result.get("outcome"), "cases": cases,
         "attribution": {"platform": "x", "profile_url": x_profile(profile_url), "intro": intro}, "integrity_notice": dict(POLICY["integrity_notice"])}
+    if automatic or "measurement_quality" in result:
+        payload["quality"] = {"status": result.get("measurement_quality", {}).get("status")}
     from community_assessment import project_assessment
     assessment = project_assessment(result, payload)
     if assessment is not None:
@@ -415,6 +440,7 @@ def preview(payload):
     validate_payload(payload)
     return {"destination": POLICY["destination"], "tested_on": payload["tested_on"], "tested_at_device": payload["measured_at_device"], "method": payload["tool"], "devices": payload["hardware"],
             **({'assessment': payload['assessment']} if 'assessment' in payload else {}),
+            **({'quality': payload['quality']} if 'quality' in payload else {}),
             "conditions": {"storage": payload["storage"], "environment": payload["environment"], "plan": payload["plan"]},
             "measurements": payload["cases"], "contributor": payload["attribution"],
             "notice": "The report and your X link will be public only after your explicit consent and review. Account control and checksums do not verify the measurements."}

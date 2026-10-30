@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -45,23 +46,12 @@ class DiagnosticTests(unittest.TestCase):
         self.assertIn('unrecognized arguments', error.getvalue())
         inspect.assert_not_called()
 
-    def test_finite_integrity_dry_run_preserves_requested_size_and_budget(self):
-        args = benchmark.parser().parse_args([
-            '--target', '/unused', '--profile', 'integrity', '--file-size', '8GiB',
-            '--write-budget', '8GiB', '--dry-run'])
-        with patch.object(benchmark, 'target_info', return_value=dict(total_bytes=200 * GIB, free_bytes=80 * GIB)), \
-             patch.object(benchmark, 'collect_hardware', return_value={}), \
-             patch.object(benchmark, 'load_reference_cache', return_value=({}, {})), \
-             patch.object(benchmark, 'find_fio', return_value=None), \
-             patch.object(benchmark, 'ensure_fio', side_effect=AssertionError('dry run cannot install fio')), \
-             patch.object(benchmark.subprocess, 'Popen', side_effect=AssertionError('dry run cannot run fio')), \
-             contextlib.redirect_stdout(io.StringIO()) as stdout:
-            self.assertEqual(benchmark.execute(args, messages('en'), messages('en')), 0)
-        config = json.loads(stdout.getvalue())['plan']
-        self.assertEqual(config['file_bytes'], 8 * GIB)
-        self.assertEqual(config['write_budget'], 8 * GIB)
-        self.assertEqual(config['max_write_bytes'], 8 * GIB)
-        self.assertEqual([job['io_bytes'] for job in config['jobs']], [8 * GIB, 8 * GIB])
+    def test_integrity_cli_is_not_an_automatic_test_option(self):
+        with patch.object(benchmark, 'target_info') as inspect, contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                benchmark.parser().parse_args(['--target', '/unused', '--profile', 'integrity', '--dry-run'])
+        self.assertEqual(caught.exception.code, 2)
+        inspect.assert_not_called()
 
     def test_mapping_repeats_sequence_and_never_reads_uninitialized_space(self):
         config = diagnostic_plan('mapping', dict(total_bytes=1000 * GIB, free_bytes=600 * GIB))
@@ -118,17 +108,10 @@ class DiagnosticTests(unittest.TestCase):
             self.assertEqual(case['status'], 'failed')
             self.assertFalse(case['metrics_complete'])
 
-    def test_preview_and_report_for_new_profiles(self):
+    def test_archived_diagnostic_reports_remain_renderable(self):
         target = dict(total_bytes=1000 * GIB, free_bytes=600 * GIB)
         for profile in ('mapping', 'integrity'):
-            args = benchmark.parser().parse_args(['--target', '/unused', '--profile', profile, '--dry-run'])
-            with patch.object(benchmark, 'target_info', return_value=target), \
-                 patch.object(benchmark, 'collect_hardware', return_value={}), \
-                 patch.object(benchmark, 'load_reference_cache', return_value=({}, {})), \
-                 patch.object(benchmark, 'find_fio', return_value=None), \
-                 contextlib.redirect_stdout(io.StringIO()) as stdout:
-                self.assertEqual(benchmark.execute(args, messages('en'), messages('en')), 0)
-            config = json.loads(stdout.getvalue())['plan']
+            config = diagnostic_plan(profile, target)
             cases = [dict(**job, status='skipped') for job in config['jobs']]
             with tempfile.TemporaryDirectory(prefix='drivespeed-report-') as directory:
                 result = dict(plan=config, cases=cases, outcome='partial', synthetic=True)
@@ -137,21 +120,12 @@ class DiagnosticTests(unittest.TestCase):
                 self.assertIn('id="diagnostics"', html)
                 self.assertNotIn('id="sustained"', html)
 
-    def test_cache_recovery_preview_respects_total_write_cap(self):
-        args = benchmark.parser().parse_args([
-            '--target', '/unused', '--profile', 'cache', '--write-budget', '16GiB',
-            '--recovery-seconds', '60', '--dry-run'])
-        with patch.object(benchmark, 'target_info', return_value=dict(total_bytes=1000 * GIB, free_bytes=600 * GIB)), \
-             patch.object(benchmark, 'collect_hardware', return_value={}), \
-             patch.object(benchmark, 'load_reference_cache', return_value=({}, {})), \
-             patch.object(benchmark, 'find_fio', return_value=None), \
-             contextlib.redirect_stdout(io.StringIO()) as stdout:
-            self.assertEqual(benchmark.execute(args, messages('en'), messages('en')), 0)
-        config = json.loads(stdout.getvalue())['plan']
-        self.assertEqual(sum(j['io_bytes'] for j in config['jobs']), 16 * GIB)
+    def test_archived_cache_recovery_plan_counts_both_writes(self):
+        config = plan('cache', file_bytes=8 * GIB, write_budget=8 * GIB)
+        add_recovery(config, 60)
         self.assertEqual(config['max_write_bytes'], 16 * GIB)
 
-    @unittest.skipUnless(shutil.which('fio'), 'fio unavailable')
+    @unittest.skipUnless(os.environ.get('DRIVESPEED_RUN_FIO_FIXTURES') == '1' and shutil.which('fio'), 'real fio fixture requires explicit opt-in')
     def test_real_crc_write_read_and_corruption(self):
         # Only 1 MiB in a private system temporary directory, never the external target.
         fio = shutil.which('fio')

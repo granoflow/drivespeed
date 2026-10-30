@@ -204,7 +204,7 @@ class CacheMeasurementTests(unittest.TestCase):
     ):
         root = new_dir()
         args = benchmark.parser().parse_args(
-            ["--target", str(root), "--profile", "cache", "--dry-run"]
+            ["--target", str(root), "--dry-run"]
         )
         captured = io.StringIO()
         with (
@@ -214,9 +214,11 @@ class CacheMeasurementTests(unittest.TestCase):
                 return_value={
                     "free_bytes": 400 * 1024**3,
                     "total_bytes": 500 * 1024**3,
+                    "path": str(root), "st_dev": 1, "inode": 2,
+                    "device": "fixture-volume", "physical_devices": ["fixture-disk"],
                 },
             ),
-            patch.object(benchmark, "find_fio", return_value=None),
+            patch.object(benchmark.WriteAllowance, "read", return_value=dict(present=False, revision=0, run_cap=64*1024**3, remaining=64*1024**3)),
             patch.object(
                 benchmark,
                 "collect_hardware",
@@ -231,48 +233,15 @@ class CacheMeasurementTests(unittest.TestCase):
             config["file_bytes"] + config["reserve_bytes"], 400 * 1024**3
         )
         self.assertGreaterEqual(config["reserve_bytes"], 50 * 1024**3)
-        self.assertTrue(config["cache_planning"]["limited_by_space_or_budget"])
+        self.assertEqual(config["method_version"], "drivespeed-auto-full-v1")
         install.assert_not_called()
 
-    def test_cache_research_for_another_drive_is_rejected_before_execution(self):
-        root = new_dir()
-        estimate = root / "estimate.json"
-        estimate.write_text(
-            json.dumps(
-                dict(
-                    basis="model_knowledge",
-                    drive_model="Drive A 2TB",
-                    cache_bytes=100_000_000_000,
-                    knowledge_basis="Test-only exact-model and write-cache recall record",
-                    sources=[],
-                )
-            )
-        )
-        args = benchmark.parser().parse_args(
-            [
-                "--target",
-                str(root),
-                "--profile",
-                "cache",
-                "--cache-estimate-file",
-                str(estimate),
-                "--dry-run",
-            ]
-        )
-        with (
-            patch.object(
-                benchmark, "target_info", return_value={"free_bytes": 1024**4}
-            ),
-            patch.object(
-                benchmark,
-                "collect_hardware",
-                return_value={"drive": {"model": "Drive B 2TB"}},
-            ),
-            patch.object(benchmark, "ensure_fio") as install,
-        ):
-            with self.assertRaises(ValueError):
-                benchmark.execute(args, messages("en"), messages("en"))
-        install.assert_not_called()
+    def test_cache_planning_flags_are_rejected_before_execution(self):
+        with patch.object(benchmark, "target_info") as inspect, contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                benchmark.parser().parse_args(["--target", "/unused", "--cache-estimate-file", "estimate.json", "--dry-run"])
+        self.assertEqual(error.exception.code, 2)
+        inspect.assert_not_called()
 
     def test_stable_cache_report_displays_numeric_estimates(self):
         points = self.points()
@@ -505,9 +474,9 @@ class ProgressAndReportTests(unittest.TestCase):
         )
         with (
             patch.object(
-                benchmark, "target_info", return_value={"free_bytes": 1000 * 1024**3}
+                benchmark, "target_info", return_value={"free_bytes": 1000 * 1024**3, "total_bytes": 2000 * 1024**3, "path": str(root), "st_dev": 1, "inode": 2, "device": "fixture-volume", "physical_devices": ["fixture-disk"]}
             ),
-            patch.object(benchmark, "find_fio", return_value=None),
+            patch.object(benchmark.WriteAllowance, "read", return_value=dict(present=False, revision=0, run_cap=64*1024**3, remaining=64*1024**3)),
             patch.object(
                 benchmark,
                 "collect_hardware",
@@ -1328,7 +1297,7 @@ class HardwareTests(unittest.TestCase):
             },
         }
         output = new_dir()
-        paths = report.render_report(result, output, "zh-CN", messages("zh-CN"))
+        paths = report.render_report(result, output, "zh-CN", messages("zh-CN"), show_computer_model=True)
         source = Path(paths["html"]).read_text()
         self.assertIn("Computer &lt;A&gt;", source)
         self.assertIn("Drive &amp; B", source)

@@ -86,5 +86,9 @@
   "computer_model": "Computer model",
   "controller_model": "Controller model",
   "drive_model": "Drive model",
-  "matched": "Matching model fields"
+  "matched": "Matching model fields",
+  "measurement_quality": "Measurement conditions",
+  "value_quiet_observed": "No activity observed in two pre-run windows; not a whole-run guarantee",
+  "value_interference_observed": "Attributed activity observed before the run",
+  "value_visibility_limited": "Pre-run activity attribution or visibility limited"
 }

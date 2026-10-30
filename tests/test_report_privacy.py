@@ -69,6 +69,7 @@ class ReportPrivacyTests(unittest.TestCase):
 
     def test_network_budget_codes_pass_through_typed_samples_and_comparison(self):
         result = local_result(); result["target"]["negotiated_bps"] = 10_000_000_000
+        result["measurement_quality"] = {"status": "quiet_observed"}  # Explicit synthetic condition.
         payload = project_result(result,"https://x.com/fixture_user",submission_id=ID)
         for difference in (None,"write_budget_bytes","unknown_write_budget_bytes"):
             with self.subTest(difference=difference), CommunityStore(state_dir()) as store:

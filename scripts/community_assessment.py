@@ -25,6 +25,8 @@ def condition_digest(payload, metric):
     context=dict(hardware=payload['hardware'],storage=storage,environment=payload['environment'],plan=payload['plan'],
                  method=payload['tool']['method_version'],links=links,
                  workload={key:case[key] for key in ('name','rw','bs_bytes','qd','numjobs','runtime_limit_seconds','rwmixread')})
+    if payload['tool']['method_version'] == 'drivespeed-auto-full-v1':
+        context['quality'] = payload.get('quality')
     return hashlib.sha256(json.dumps(context,sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
 
 

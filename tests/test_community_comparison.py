@@ -15,6 +15,7 @@ from community_comparison import build_comparison, read_comparison, _conditions
 class ComparisonTests(unittest.TestCase):
     def setUp(self):
         self.store = CommunityStore(state_dir()); self.result = local_result()
+        self.result["measurement_quality"] = {"status": "quiet_observed"}  # Explicit synthetic observation, never backfill a legacy run.
         self.result["target"]["negotiated_bps"] = 10_000_000_000
         p = project_result(self.result, "https://x.com/fixture_user", submission_id=ID)
         self.store.create(p, self.result["run_id"], "fixture-only-path")

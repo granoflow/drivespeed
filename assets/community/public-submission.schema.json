@@ -32,7 +32,10 @@
           "minLength": 1
         },
         "method_version": {
-          "const": "drivespeed-file-v1"
+          "enum": [
+            "drivespeed-file-v1",
+            "drivespeed-auto-full-v1"
+          ]
         },
         "fio_version": {
           "type": "string",
@@ -218,7 +221,8 @@
         "os": {
           "enum": [
             "macos",
-            "linux"
+            "linux",
+            "windows"
           ]
         },
         "os_version": {
@@ -956,6 +960,22 @@
         "specs",
         "references"
       ]
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "quiet_observed",
+            "interference_observed",
+            "visibility_limited"
+          ]
+        }
+      }
     }
   },
   "required": [

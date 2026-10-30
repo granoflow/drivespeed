@@ -86,5 +86,9 @@
   "computer_model": "电脑型号",
   "controller_model": "硬盘盒主控型号",
   "drive_model": "硬盘型号",
-  "matched": "相同型号"
+  "matched": "相同型号",
+  "measurement_quality": "测量背景",
+  "value_quiet_observed": "启动前两个窗口未见活动；不保证全程无干扰",
+  "value_interference_observed": "启动前观察到有归属的活动",
+  "value_visibility_limited": "启动前活动来源或可见性不足"
 }

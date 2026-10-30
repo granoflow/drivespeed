@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import os
 import platform
 import plistlib
@@ -491,6 +492,87 @@ def check_target(original, reserve=0):
     if current["free_bytes"] < reserve:
         raise BenchError("space_failed", f"Required free bytes: {reserve}")
     return current
+
+
+def quality_from_windows(windows, source, attributable=False):
+    """Startup observation only; an open handle is not an activity delta."""
+    valid = len(windows) == 2 and all(
+        type(value) is int and value >= 0 for value in windows
+    )
+    status = "visibility_limited"
+    if valid and not any(windows):
+        status = "quiet_observed"
+    elif valid and attributable:
+        status = "interference_observed"
+    return dict(status=status, observation_seconds=10 if valid else 0, scope="pre_run",
+                source=source, activity_deltas=windows if valid else [])
+
+
+def observe_quality(target):
+    """One baseline and two 5-second windows; never wait for a zero sample."""
+    system = platform.system()
+    # A known concurrent benchmark is a scheduling conflict, not a quality note.
+    if system in ("Darwin", "Linux"):
+        conflict = subprocess.run(["pgrep", "-x", "fio"], capture_output=True, timeout=5)
+        if conflict.returncode == 0:
+            raise BenchError("device_busy", "Another fio benchmark is active")
+        if conflict.returncode != 1:
+            raise BenchError("unsafe_target", "Could not check benchmark conflicts")
+    elif system == "Windows":
+        conflict = subprocess.run(["tasklist", "/FI", "IMAGENAME eq fio.exe", "/FO", "CSV", "/NH"], capture_output=True, timeout=5)
+        if conflict.returncode:
+            raise BenchError("unsafe_target", "Could not check benchmark conflicts")
+        if b'"fio.exe"' in conflict.stdout.lower():
+            raise BenchError("device_busy", "Another fio benchmark is active")
+    started, monotonic_start = time.time(), time.monotonic()
+
+    def observed(windows, source):
+        quality = quality_from_windows(windows, source)
+        quality.update(window_started_unix_seconds=started, window_ended_unix_seconds=time.time(),
+                       observation_seconds=round(time.monotonic() - monotonic_start, 3))
+        return quality
+
+    devices = target["physical_devices"]
+    try:
+        if system == "Darwin":
+            raw = capture(["iostat", "-d", "-I", "-w", "5", "-c", "3", *devices], timeout=20).decode()
+            rows = []
+            for line in raw.splitlines():
+                fields = line.split()
+                if len(fields) != 3 * len(devices):
+                    continue
+                try:
+                    numbers = [float(value) for value in fields]
+                except ValueError:
+                    continue
+                if any(not math.isfinite(n) or n < 0 for n in numbers):
+                    raise ValueError("Invalid activity counter")
+                transfers = sum(numbers[3 * i + 1] for i in range(len(devices)))
+                if transfers != int(transfers):
+                    raise ValueError("Invalid transfer count")
+                rows.append(int(transfers))
+            # iostat's first record is cumulative since boot, never this window.
+            return observed(rows[1:] if len(rows) == 3 else [], "iostat")
+        if system == "Linux":
+            def counters():
+                rows = {parts[2]: parts for line in Path("/proc/diskstats").read_text().splitlines()
+                        if len(parts := line.split()) >= 14}
+                return sum(int(rows[name][3]) + int(rows[name][7]) for name in devices)
+            baseline, deltas = counters(), []
+            for _ in range(2):
+                time.sleep(5)
+                current = counters()
+                deltas.append(current - baseline)
+                baseline = current
+            return observed(deltas, "proc_diskstats")
+        # Windows still runs the finite observation. Without trustworthy per-disk
+        # counters it cannot claim a quiet device from an empty result.
+        for _ in range(2):
+            check_target(target)
+            time.sleep(5)
+        return observed([], "unavailable")
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        return observed([], "unavailable")
 
 
 class DeviceLock:

@@ -28,7 +28,7 @@ Agent 会检查并安装所需的 fio 测速工具，引导你完成测试和查
 
 macOS 支持；Linux 与 Windows 本地测速为实验性支持，仍需实机验证。Windows 测试文件会保留；社区分享同样为实验性，私有缓存需支持 ACL 的本地卷（如 NTFS）。
 
-[详细用法](references/cli.md) · [测试方法](references/methodology.md) · [专项测试](references/diagnostics.md) · [MIT 开源许可](LICENSE) · [第三方许可](THIRD_PARTY_NOTICES.md)
+[详细用法](references/cli.md) · [测试方法](references/methodology.md) · [诊断边界](references/diagnostics.md) · [MIT 开源许可](LICENSE) · [第三方许可](THIRD_PARTY_NOTICES.md)
 
 ## 自愿公开与横向测评
 
