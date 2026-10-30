@@ -498,8 +498,11 @@ class DeviceLock:
         self.paths = []
         self.mutexes = []
         self.devices = target["physical_devices"]
-        # Share locks with older published runners to prevent concurrent disk tests.
-        self.root = Path(tempfile.gettempdir()) / "external-disk-benchmark-locks"
+        # Per-run TMPDIR values must not split the same user's physical-disk locks.
+        self.root = CACHE / "device-locks"
+        # Also exclude older runners in this temporary root. Older versions using
+        # a different TMPDIR cannot participate in the new shared namespace.
+        self.legacy_root = Path(tempfile.gettempdir()) / "external-disk-benchmark-locks"
 
     def __enter__(self):
         if platform.system() == "Windows":
@@ -510,20 +513,24 @@ class DeviceLock:
                 self.__exit__(None, None, None)
                 raise BenchError("locked", str(exc)) from exc
             return self
-        self.root.mkdir(mode=0o700, exist_ok=True)
-        if self.root.is_symlink() or self.root.stat().st_uid != os.getuid():
-            raise BenchError("locked", "Untrusted lock directory")
         try:
-            for device in sorted(self.devices):
-                key = hashlib.sha256(device.encode()).hexdigest()
-                path = self.root / key
-                path.mkdir(mode=0o700)
-                self.paths.append(path)
+            for root in (self.root, self.legacy_root):
+                root.mkdir(mode=0o700, parents=True, exist_ok=True)
+                if root.is_symlink() or root.stat().st_uid != os.getuid():
+                    raise BenchError("locked", "Untrusted lock directory")
+                for device in sorted(self.devices):
+                    key = hashlib.sha256(device.encode()).hexdigest()
+                    path = root / key
+                    path.mkdir(mode=0o700)
+                    self.paths.append(path)
         except FileExistsError as exc:
             self.__exit__(None, None, None)
             raise BenchError(
                 "locked", "Another run or stale lock exists; inspect before removing"
             ) from exc
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
         return self
 
     def __exit__(self, *args):

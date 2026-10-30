@@ -29,6 +29,8 @@ Windows 仅接受能唯一识别为在线、可写、非聚集物理盘的 GPT/M
 
 输出与目标路径不接受符号链接组件。以物理设备为单位加锁，APFS 多卷共享物理盘也互斥；Linux通过findmnt/lsblk机器可读依赖树识别本地NVMe/SATA/USB及LVM/RAID等底层盘，实验性支持；已知网络块传输（如iSCSI、NBD和NVMe-over-Fabrics）拒绝；NVMe须正向识别PCIe，传输缺失须有本地sysfs证据，不能默认当作USB或物理盘。普通文件层级保护不抵御同权限恶意进程篡改，也不提供断电保证。系统盘可写用户目录可由用户明确选择；只读/无权限目录、网络盘、无法完整识别物理依赖的设备及裸盘拒绝。磁盘映像/loop仅在本地普通backing file及其宿主物理依赖可完整解析时允许，标为虚拟文件系统性能而非物理盘性能；未知映射不使用弱锁放行。新增路径已做fixture和macOS只读目录识别验证，尚未真实I/O验收。
 
+macOS/Linux 的物理盘锁默认保存在 `~/.cache/drivespeed/device-locks`。使用同一用户缓存根的新版程序不会因不同任务的 `TMPDIR` 产生独立锁；隔离用户主目录或修改缓存根的进程不共享该命名空间。同时保留当前临时目录中的旧版锁以兼容同一 `TMPDIR` 的旧程序。使用其他 `TMPDIR` 的旧版程序不受新锁保护，不能混用版本并发测速；遇到残留锁须核实归属，不自动删锁或终止进程。Windows 仍使用原有命名互斥锁。
+
 ## 硬件与项目来源
 
 每次实际测速重新采集 `hardware.computer / drive / enclosure`，字段为 model/source；enclosure 另有未确认关联的 bridge_candidates。缺失字段保留 null，不复用历史报告。`--computer-model`、`--drive-model`、`--enclosure-model` 可提供用户已确认的型号，source=user。system_profiler 只按 target.physical_devices 中的 BSD 标识选择硬盘，Linux 以 lsblk 匹配物理盘，Windows 使用已识别目标磁盘的系统型号；原始硬件清单和序列号不存入结果。
