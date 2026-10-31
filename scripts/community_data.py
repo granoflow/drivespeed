@@ -290,6 +290,14 @@ FULL_CASES = {
 }
 
 
+def require_publication_quality(payload):
+    """Gate new publication without invalidating stored historical snapshots."""
+    quality = payload.get("quality")
+    if not isinstance(quality, dict) or quality.get("status") != "quiet_observed":
+        raise CommunityError("measurement_quality", ["quality.status"])
+    return payload
+
+
 def require_full_report(payload):
     automatic = payload["tool"]["method_version"] == "drivespeed-auto-full-v1"
     if automatic and payload.get("quality", {}).get("status") not in ("quiet_observed", "interference_observed", "visibility_limited"):

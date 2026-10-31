@@ -287,7 +287,7 @@
   "util_comment_balanced": "已知配置能力接近，本次表现较均衡。",
   "util_comment_bottleneck": "当前可能主要受{component}限制。",
   "util_comment_normal": "尚未接近已知路径上限，升级前先核查测试条件。",
-  "util_comment_measurement_quality": "测量背景未记录或存在干扰，本次结果不用于设备星级或瓶颈归因。",
+  "util_comment_measurement_quality": "测量背景未记录或存在干扰，本次结果不用于设备星级或瓶颈归因。请先排除干扰并确保背景监测可用，再重新测量；本次结果仅保留在本地，不投稿。",
   "measurement_quality": "测量背景",
   "quality_quiet_observed": "启动前两个5秒窗口未观察到其他磁盘活动；不代表全程无干扰。",
   "quality_interference_observed": "启动前观察到有归属的活动，本次只描述该主机路径的结果。",

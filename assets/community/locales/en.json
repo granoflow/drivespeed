@@ -1,5 +1,9 @@
 {
   "share_notice": "The report and your X link will be public only after your explicit consent and review. Account control and checksums do not verify the measurements.",
+  "measurement_quality": {
+    "message": "Unknown, limited or affected measurement conditions prevent submission.",
+    "next_action": "Keep the local report. Resolve interference and restore background monitoring, then recommend a new measurement. Obtain disk-write authorization before rerunning; do not edit quality fields to bypass checks."
+  },
   "generic": {
     "message": "The community operation could not be completed.",
     "next_action": "Use list to inspect local history, then choose the matching operation. Do not delete state or bypass consent."

@@ -287,7 +287,7 @@
   "util_comment_balanced": "Known component capacities are close; this run appears balanced.",
   "util_comment_bottleneck": "The {component} is the likely limiting component.",
   "util_comment_normal": "The run is below known path limits; check test conditions before upgrading.",
-  "util_comment_measurement_quality": "Background conditions are unknown or affected by activity; this run is not used for device ratings or bottleneck attribution.",
+  "util_comment_measurement_quality": "Background conditions are unknown or affected by activity; this run is not used for device ratings or bottleneck attribution. Resolve interference and restore background monitoring before measuring again. Keep this result local; do not submit it.",
   "measurement_quality": "Measurement conditions",
   "quality_quiet_observed": "No other disk activity observed in two 5-second pre-run windows; not a whole-run guarantee.",
   "quality_interference_observed": "Attributed activity observed before the run; results describe this host path under those conditions.",

@@ -15,11 +15,17 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"scripts"))
-from test_community import payload, state_dir, ID
+from test_community import payload as historical_payload, state_dir, ID
 from community_data import CommunityError, POLICY, digest, normalise_payload, parse_json
 from community_store import CommunityStore
 from community_network import CommunityClient, CommunityHTTP, NetworkError, check_receipt
 import community
+
+def payload():
+    result = historical_payload()
+    result["quality"] = {"status": "quiet_observed"}
+    return result
+
 
 REMOTE_ID = "22222222-2222-4222-8222-222222222222"
 FLOW_ID = "33333333-3333-4333-8333-333333333333"
@@ -82,6 +88,32 @@ class ClientTests(unittest.TestCase):
         self.store.close()
     def consent(self):
         self.store.consent(ID, POLICY["notice_version"])
+    def test_unqualified_frozen_snapshot_cannot_start_authorization(self):
+        for status in (None, "visibility_limited", "interference_observed"):
+            with CommunityStore(state_dir()) as store:
+                value = payload()
+                if status is None:
+                    value.pop("quality")
+                else:
+                    value["quality"]["status"] = status
+                store.create(value, "old-run", "PRIVATE-LOCAL-PATH")
+                store.consent(ID, POLICY["notice_version"])
+                http = FakeHTTP(store)
+                client = CommunityClient(store, http, sleep=lambda _: None)
+                with self.assertRaises(CommunityError) as caught:
+                    client.publish(ID)
+                self.assertEqual(caught.exception.code, "measurement_quality")
+                self.assertFalse(any(path.endswith("/auth/flows") or
+                    (method == "POST" and path == "/api/v1/benchmarks")
+                    for method, path in http.calls))
+                http.accepted = True
+                self.assertEqual(client.publish(ID)["submission_id"], ID)
+                self.assertTrue(client.receipt(ID)["accepted"])
+                self.assertEqual(client.withdraw(ID)["status"], "preview")
+                self.assertEqual(client.withdraw(ID, confirm=True)["status"], "withdrawn")
+                self.assertEqual(http.calls.count(("DELETE", "/api/v1/benchmarks/" + ID)), 1)
+                self.assertEqual(store.payload(ID), normalise_payload(value))
+
     def test_no_consent_or_withdraw_preview_sends_nothing(self):
         with self.assertRaisesRegex(CommunityError, "consent_required"):
             self.client.publish(ID)

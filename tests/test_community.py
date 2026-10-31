@@ -349,7 +349,9 @@ class OfflineCLITests(unittest.TestCase):
     def setUp(self):
         self.root = state_dir()
         self.source = self.root / "results.json"
-        self.source.write_text(json.dumps(local_result()), encoding="utf-8")
+        result = local_result()
+        result["measurement_quality"] = {"status": "quiet_observed"}
+        self.source.write_text(json.dumps(result), encoding="utf-8")
         self.cache = self.root / "cache"
 
     def call(self, *args):
@@ -358,6 +360,36 @@ class OfflineCLITests(unittest.TestCase):
              patch("subprocess.run", side_effect=AssertionError("offline operation must not launch processes")):
             code = community.main(list(args))
         return code, json.loads(output.getvalue())
+
+    def test_unqualified_background_blocks_prepare_without_creating_state(self):
+        for status in (None, "visibility_limited", "interference_observed"):
+            from test_auto_full import community_result
+            result = community_result(status)
+            if status is None:
+                result.pop("measurement_quality")
+            self.source.write_text(json.dumps(result))
+            before = self.source.read_bytes()
+            code, output = self.call("prepare", "--input", str(self.source),
+                "--x-profile", "https://x.com/fixture_user", "--state-dir", str(self.cache),
+                "--ui-language", "zh")
+            self.assertNotEqual(code, 0)
+            self.assertIn("measurement_quality", json.dumps(output))
+            self.assertIn("重新测量", json.dumps(output, ensure_ascii=False))
+            self.assertFalse(self.cache.exists())
+            self.assertEqual(self.source.read_bytes(), before)
+
+    def test_old_unqualified_snapshot_cannot_receive_new_publication_consent(self):
+        with CommunityStore(self.cache) as store:
+            store.create(payload(), "old-run", self.source)
+        code, output = self.call("consent", "--submission-id", ID, "--decision", "publish",
+            "--notice-version", data.POLICY["notice_version"], "--state-dir", str(self.cache))
+        self.assertEqual(code, 2)
+        self.assertEqual(output["error"]["code"], "measurement_quality")
+        code, output = self.call("preview", "--submission-id", ID, "--state-dir", str(self.cache))
+        self.assertEqual(code, 0)
+        code, output = self.call("consent", "--submission-id", ID, "--decision", "declined",
+            "--state-dir", str(self.cache))
+        self.assertEqual(code, 0)
 
     def test_prepare_and_consent_are_offline_readable_and_do_not_write_json_cache(self):
         before = self.source.read_bytes()
@@ -433,6 +465,7 @@ class OfflineCLITests(unittest.TestCase):
 
     def test_missing_metadata_is_not_guessed_or_persisted(self):
         raw = local_result()
+        raw["measurement_quality"] = {"status": "quiet_observed"}
         raw["plan"].pop("profile")
         self.source.write_text(json.dumps(raw))
         code, error = self.call("prepare", "--input", str(self.source), "--x-profile", "https://x.com/user", "--state-dir", str(self.cache))

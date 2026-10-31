@@ -15,7 +15,7 @@ import sqlite3
 import sys
 import traceback
 
-from community_data import CommunityError, parse_json, preview, project_result, notice_details
+from community_data import CommunityError, parse_json, preview, project_result, notice_details, require_publication_quality
 from community_store import CommunityStore
 from community_network import CommunityClient, CommunityHTTP, NetworkError
 from progress import language_default
@@ -140,6 +140,8 @@ def _error_group(code):
         return "arguments", "invalid_arguments"
     if code in ("input_unavailable", "invalid_input_file", "unsafe_input_path"):
         return "input_access", "input_unavailable"
+    if code == "measurement_quality":
+        return "measurement_quality", code
     if code == "missing_parameters":
         return "parameters", code
     if code == "consent_required":
@@ -208,6 +210,7 @@ def main(argv=None):
         if operation in ("prepare", "remember", "compare"):
             source_path, result = read_result(args.input)
             if operation == "prepare":
+                require_publication_quality({"quality": result.get("measurement_quality", {})})
                 payload = project_result(result, args.x_profile, args.intro)
         state_attempted = True
         with CommunityStore(getattr(args, "state_dir", None)) as store:
@@ -225,6 +228,7 @@ def main(argv=None):
                 else:
                     if args.notice_version is None:
                         raise CommunityError("consent_required", ["notice_version"])
+                    require_publication_quality(store.payload(args.submission_id))
                     consent_id = store.consent(args.submission_id, args.notice_version, args.decision)
                     output = {"status": "consented", "submission_id": args.submission_id, "consent_id": consent_id}
             elif operation == "list":

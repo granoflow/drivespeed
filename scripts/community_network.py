@@ -11,7 +11,7 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-from community_data import CommunityError, POLICY, parse_json, validate_payload, transport, require_full_report
+from community_data import CommunityError, POLICY, parse_json, validate_payload, transport, require_full_report, require_publication_quality
 from agent_usage import agent_usage
 
 CONTACT = "https://x.com/slime5409"
@@ -293,6 +293,7 @@ class CommunityClient:
                     raise
             payload, consent = self.store.require_consent(submission_id)
             require_full_report(payload)
+            require_publication_quality(payload)
             consent_id = self.store._report(submission_id)["consent_id"]
             flow = self._call("POST", "/api/v1/auth/flows", {"submission_id": submission_id, "content_sha256": checksum,
                 "management_token_sha256": hashlib.sha256(token.encode()).hexdigest(), "profile_url": payload["attribution"]["profile_url"],
