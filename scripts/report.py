@@ -801,12 +801,15 @@ def render_report(result, output, language, text, requested_format="html", compa
             else text["source_reference"] if source == "reference"
             else text["source_system"]
         )
+        if key == "drive" and product_profile is not None:
+            original_drive_source = source_text
+            source_text = text["product_resources"]
         hardware_rows.append(
             f'<tr><th scope="row">{esc(text[label])}</th><td>{esc(model or text["source_unknown"])}</td><td class="muted">{esc(source_text) if item.get("model") else ""}</td></tr>'
         )
     if product_profile is not None:
         original = hardware.get("drive", {}).get("matching_model") or hardware.get("drive", {}).get("model")
-        hardware_rows.append(f'<tr><th scope="row">{esc(text["original_model"])}</th><td>{esc(original)}</td><td></td></tr>')
+        hardware_rows.append(f'<tr><th scope="row">{esc(text["original_model"])}</th><td>{esc(original)}</td><td>{esc(original_drive_source)}</td></tr>')
     if hardware.get("access_interface") is not None:
         from interface_types import confirmed_interface
         interface = hardware["access_interface"]

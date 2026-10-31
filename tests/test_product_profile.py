@@ -156,6 +156,8 @@ class ProductPresentationTests(unittest.TestCase):
                 paths = render_report(result, folder, lang, messages(lang), product_profile=profile)
                 html = Path(paths['html']).read_text()
                 self.assertIn('Fixture Official NVMe SSD 2TB', html)
+                self.assertIn('<td>Fixture Official NVMe SSD 2TB</td><td class="muted">'+messages(lang)['product_resources']+'</td>', html)
+                self.assertIn('<td>Fixture SSD 2TB</td><td>'+messages(lang)['source_system']+'</td>', html)
                 self.assertIn(messages(lang)['original_model'], html)
                 self.assertIn('Fixture SSD 2TB', html)
                 self.assertIn('id="product-resources"', html)
@@ -175,6 +177,16 @@ class ProductPresentationTests(unittest.TestCase):
             html = Path(artifacts['html']).read_text()
             self.assertIn('Fixture Named Product 2TB', html)
             self.assertNotIn('id="product-resources"', html)
+
+    def test_product_name_does_not_inherit_user_supplied_origin(self):
+        result = self.result()
+        result['hardware']['drive']['source'] = 'user'
+        profile = fixture_profile()
+        profile['display_name'] = 'Fixture Named Product 2TB'
+        with tempfile.TemporaryDirectory() as folder:
+            html = Path(render_report(result, folder, 'en', messages('en'), product_profile=profile)['html']).read_text()
+            self.assertIn('<td>Fixture Named Product 2TB</td><td class="muted">Device resources</td>', html)
+            self.assertIn('<td>Fixture SSD 2TB</td><td>User supplied</td>', html)
 
     def test_target_bound_interface_is_system_evidence_and_arbitrary_sources_are_rejected(self):
         result = self.result()
