@@ -299,5 +299,11 @@
   "core_incomplete": "Core measurements or required logs are incomplete. This is a partial result and cannot be submitted as a complete report.",
   "incomplete_measurement": "Required measurements or collection are incomplete.",
   "sampling_irregular": "Sampling scheduling was uneven, limiting time resolution. Final statistics are retained; fixed-window and cache conclusions are not provided.",
-  "depth_raw": "Achieved depth distribution (fio values, not normalized)"
+  "depth_raw": "Achieved depth distribution (fio values, not normalized)",
+  "product_resources": "Device resources",
+  "official_resources": "Official resources",
+  "independent_reviews": "Independent reviews",
+  "original_model": "Original system model",
+  "sources_checked": "Sources checked",
+  "system_identifier": "system identifier"
 }

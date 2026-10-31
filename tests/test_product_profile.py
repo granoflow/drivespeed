@@ -136,3 +136,56 @@ class ProductProfileTests(unittest.TestCase):
             with patch.object(sys, 'argv', args), contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(report.main(), 2)
             self.assertEqual(old.read_text(), 'previous artifact')
+
+
+class ProductPresentationTests(unittest.TestCase):
+    def result(self):
+        result = local_result(); result.pop('user_input', None)
+        result['target']['physical_devices'] = ['fixture-disk']
+        result['hardware']['drive'].update(model='Fixture SSD 2TB', matching_model='Fixture SSD 2TB')
+        return result
+
+    def test_name_sources_dates_and_raw_identity_are_rendered_without_changing_measurements(self):
+        result = self.result(); before = json.dumps(result, sort_keys=True)
+        profile = fixture_profile(); profile['display_name'] = 'Fixture Official NVMe SSD 2TB'
+        review = copy.deepcopy(profile['review_sources'][0]); review.update(url='https://example.com/review-two', canonical_url='https://example.com/review-two',
+            display_name='A long <script>not executable</script> review title', checked_on='2026-10-28')
+        profile['review_sources'].append(review)
+        for lang in ['en', 'zh']:
+            with self.subTest(language=lang), tempfile.TemporaryDirectory() as folder:
+                paths = render_report(result, folder, lang, messages(lang), product_profile=profile)
+                html = Path(paths['html']).read_text()
+                self.assertIn('Fixture Official NVMe SSD 2TB', html)
+                self.assertIn(messages(lang)['original_model'], html)
+                self.assertIn('Fixture SSD 2TB', html)
+                self.assertIn('id="product-resources"', html)
+                self.assertNotIn(messages(lang)['official_resources']+'</h3>', html)
+                self.assertIn('2026-10-28', html); self.assertIn('2026-10-30', html)
+                self.assertIn('&lt;script&gt;not executable&lt;/script&gt;', html)
+                self.assertNotIn('<script>not executable</script>', html)
+                self.assertIn('2TB fixture, not a real product', html)
+                self.assertEqual(html.count('class="product-source-group"'), 1)
+        self.assertEqual(json.dumps(result, sort_keys=True), before)
+
+    def test_reliable_name_survives_empty_or_unavailable_sources_without_placeholders(self):
+        profile = fixture_profile(); profile['display_name'] = 'Fixture Named Product 2TB'
+        profile['review_sources'][0]['availability'] = 'unavailable'
+        with tempfile.TemporaryDirectory() as folder:
+            artifacts = render_report(self.result(), folder, 'en', messages('en'), product_profile=profile)
+            html = Path(artifacts['html']).read_text()
+            self.assertIn('Fixture Named Product 2TB', html)
+            self.assertNotIn('id="product-resources"', html)
+
+    def test_target_bound_interface_is_system_evidence_and_arbitrary_sources_are_rejected(self):
+        result = self.result()
+        result['hardware']['access_interface'] = {'name':'USB4 40 Gbps', 'source':'ioreg:target-ancestor'}
+        result['hardware']['controller'] = {'model':'ASMedia 246x','source':'ioreg:target-ancestor','precision':'series'}
+        before = copy.deepcopy(result)
+        with tempfile.TemporaryDirectory() as folder:
+            html = Path(render_report(result, folder, 'en', messages('en'))['html']).read_text()
+            self.assertIn('USB4 40 Gbps', html); self.assertIn('ASMedia 246x', html)
+            self.assertIn('system identifier', html); self.assertNotIn('ASM2464PD', html)
+            self.assertEqual(result, before)
+            result['hardware']['access_interface']['source'] = 'some-unbound-candidate'
+            with self.assertRaisesRegex(ValueError, 'Invalid access interface'):
+                render_report(result, folder, 'en', messages('en'))

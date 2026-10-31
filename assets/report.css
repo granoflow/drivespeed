@@ -254,3 +254,10 @@ html[dir="rtl"] .cache-reference, html[dir="rtl"] .card .notice { direction: rtl
 }
 
 .component-rating-stars { white-space: nowrap; font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif; }
+
+#product-resources .product-source-group{max-width:850px}#product-resources h3{font-size:1.05rem;margin:24px 0 8px}
+#product-resources ul{list-style:none;padding:0;margin:0}#product-resources li{padding:10px 0;border-bottom:1px solid #dbe4ee;overflow-wrap:anywhere}
+#product-resources a{display:inline-flex;align-items:center;min-height:44px;max-width:100%;overflow-wrap:anywhere}
+#product-resources p{font-size:.88rem;margin:4px 0 6px;color:#526579}#product-resources time{white-space:nowrap}
+#product-resources a:focus-visible{outline:2px solid #174e7d;outline-offset:4px}#product-resources a:visited{color:#675184}
+@media print{#product-resources{break-inside:auto}#product-resources h2,#product-resources h3{break-after:avoid}#product-resources li{break-inside:avoid;padding:7px 0}#product-resources a{display:inline;min-height:0}#product-resources a[href]::after{content:" (" attr(href) ")";overflow-wrap:anywhere}}

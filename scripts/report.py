@@ -693,6 +693,33 @@ def render_diagnostics(result, text):
     return '<section id="diagnostics"><h2>' + esc(text["diagnostics"]) + '</h2>' + ''.join(parts) + '</section>'
 
 
+def render_product_resources(profile, text):
+    """Render already validated derived evidence without network or measurement changes."""
+    if profile is None:
+        return ""
+    groups = [(text["official_resources"], profile["official_sources"]),
+              (text["independent_reviews"], profile["review_sources"])]
+    sources = [source for _, items in groups for source in items if source["availability"] == "verified"]
+    if not sources:
+        return ""
+    dates = {source["checked_on"] for source in sources}
+    sections = []
+    for title, items in groups:
+        rows = []
+        for source in items:
+            if source["availability"] != "verified":
+                continue
+            date = (f' · {esc(text["sources_checked"])} <time datetime="{esc(source["checked_on"])}">'
+                    f'{esc(source["checked_on"])}</time>') if len(dates) > 1 else ""
+            rows.append(f'<li><a href="{esc(source["canonical_url"])}" target="_blank" rel="noopener noreferrer">'
+                        f'{esc(source["display_name"])} ↗</a><p>{esc(source["publisher"])} · {esc(source["scope"])}{date}</p></li>')
+        if rows:
+            sections.append(f'<div class="product-source-group"><h3>{esc(title)}</h3><ul>{"".join(rows)}</ul></div>')
+    checked = (f'<p class="source-checked">{esc(text["sources_checked"])}: <time datetime="{esc(next(iter(dates)))}">'
+               f'{esc(next(iter(dates)))}</time></p>') if len(dates) == 1 else ""
+    return f'<section id="product-resources"><h2>{esc(text["product_resources"])}</h2>{"".join(sections)}{checked}</section>'
+
+
 def render_report(result, output, language, text, requested_format="html", comparison=None, community_messages=None, show_computer_model=False, product_profile=None):
     if product_profile is not None:
         from product_profile import validate_profile, matches_profile
@@ -762,6 +789,10 @@ def render_report(result, output, language, text, requested_format="html", compa
             if candidates:
                 model = " / ".join(candidates) + " · " + text["controller_candidate"]
         source = item.get("source", "unavailable")
+        if key == "drive" and product_profile is not None:
+            model = product_profile["display_name"]
+        if key == "controller" and model and item.get("precision") == "series" and source == "ioreg:target-ancestor":
+            model += " · " + text["system_identifier"]
         source_text = (
             text["source_user"]
             if source == "user"
@@ -773,13 +804,17 @@ def render_report(result, output, language, text, requested_format="html", compa
         hardware_rows.append(
             f'<tr><th scope="row">{esc(text[label])}</th><td>{esc(model or text["source_unknown"])}</td><td class="muted">{esc(source_text) if item.get("model") else ""}</td></tr>'
         )
+    if product_profile is not None:
+        original = hardware.get("drive", {}).get("matching_model") or hardware.get("drive", {}).get("model")
+        hardware_rows.append(f'<tr><th scope="row">{esc(text["original_model"])}</th><td>{esc(original)}</td><td></td></tr>')
     if hardware.get("access_interface") is not None:
         from interface_types import confirmed_interface
         interface = hardware["access_interface"]
-        if not isinstance(interface, dict) or interface.get("source") != "user":
-            raise ValueError("Invalid user-confirmed interface")
+        if not isinstance(interface, dict) or interface.get("source") not in ("user", "ioreg:target-ancestor"):
+            raise ValueError("Invalid access interface")
+        provenance = text["source_user"] if interface["source"] == "user" else text["source_system"]
         interface = confirmed_interface(interface.get("name"))
-        hardware_rows.append(f'<tr><th scope="row">{esc(text["protocol"])}</th><td>{esc(interface["name"])}</td><td>{esc(text["source_user"])}</td></tr>')
+        hardware_rows.append(f'<tr><th scope="row">{esc(text["protocol"])}</th><td>{esc(interface["name"])}</td><td>{esc(provenance)}</td></tr>')
     hardware_html = (
         '<section id="hardware"><h2>'
         + esc(text["hardware"])
@@ -1117,9 +1152,11 @@ def render_report(result, output, language, text, requested_format="html", compa
 {('<dl class="cards long-cards">' + "".join(cards) + '</dl><div class="summary-notes"><p>* ' + esc(text["cache_summary_note"]) + '</p></div>') if cards else '<p class="notice">' + esc(text[cache_label]) + '</p>'}''' if result.get('plan', {}).get('profile') not in ('mapping', 'integrity') else ''
     sustained_html = f'''<section id="sustained"><h2>{esc(text["sustained"])}</h2><p class="muted" id="tail-speed-note">{esc(text["tail_explanation"])}</p><div class="sustained-grid"><div>{chart(series, text)}</div><dl>{"".join(lines)}</dl></div>{cache_html}</section>''' if result.get('plan', {}).get('profile') not in ('mapping', 'integrity') else ''
     drive = hardware.get("drive", {})
-    object_line = str(drive.get("matching_model") or drive.get("model") or text["unknown"])+" · "+text.get("scope_"+str(target.get("scope")),text["unknown"])
+    display_model = product_profile["display_name"] if product_profile is not None else drive.get("matching_model") or drive.get("model") or text["unknown"]
+    object_line = str(display_model)+" · "+text.get("scope_"+str(target.get("scope")),text["unknown"])
+    document_title = str(display_model)+" · "+text["title"] if product_profile is not None else text["title"]
     document = f'''<!doctype html>
-<html lang="{esc(language)}" dir="{direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{esc(text["title"])}</title><style>{css}</style></head><body><main>
+<html lang="{esc(language)}" dir="{direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{esc(document_title)}</title><style>{css}</style></head><body><main>
 <header><div><h1>{esc(text["title"])}</h1><p>{esc(object_line)}</p><p class="run-meta"><time datetime="{esc(created)}">{esc(created_display)}</time><span>{esc(status)} · {len(completed)}/{len(cases)}</span></p></div><button type="button" title="{esc(text["print_hint"])}" onclick="window.print()">{esc(text["download"])}</button></header>
 {sampling_notice}
 {sample}
@@ -1130,6 +1167,7 @@ def render_report(result, output, language, text, requested_format="html", compa
 {render_peak_comparison(result, text)}
 {hardware_html}
 {render_hardware_assessment(result, text)}
+{render_product_resources(product_profile, text)}
 {render_evaluation(result, language)}
 {render_user_input(result, language, text)}
 {community_html}

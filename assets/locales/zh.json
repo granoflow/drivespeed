@@ -299,5 +299,11 @@
   "core_incomplete": "核心测量或应有日志不完整。这是部分结果，不能作为完整报告投稿。",
   "incomplete_measurement": "必要测量或采集不完整。",
   "sampling_irregular": "采样调度不齐，时间分辨率受限。保留最终统计，不提供固定窗口和缓存结论。",
-  "depth_raw": "实际队列深度分布（fio 原始值，未归一化）"
+  "depth_raw": "实际队列深度分布（fio 原始值，未归一化）",
+  "product_resources": "设备资料",
+  "official_resources": "官方资料",
+  "independent_reviews": "独立评测",
+  "original_model": "系统原型号",
+  "sources_checked": "资料核对",
+  "system_identifier": "系统标识"
 }
