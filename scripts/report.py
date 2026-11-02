@@ -1179,7 +1179,7 @@ def render_report(result, output, language, text, requested_format="html", compa
         text.get(key, text["unknown"])
         for key in result.get("notes", []) if key not in delivery_only
     ]
-    if result.get("outcome") != "complete" and not (
+    if result.get("outcome") != "complete" and result.get("actual_write_bytes") is None and not (
         cases and all(c.get("status") == "completed" and c.get("metrics_complete") is True for c in cases)
     ):
         notes.append(

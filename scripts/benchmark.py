@@ -575,6 +575,15 @@ def execute(args, text, report_text):
                 save(output / "results.json", result)
                 if case["status"] != "completed":
                     error_code = 6 if case["status"] == "partial" else 5
+                    # A valid initialized file still supports the remaining
+                    # measurements when only the cache-stability goal is missing.
+                    # Preserve partial qualification; never continue after I/O,
+                    # initialization, identity or collection-integrity failure.
+                    if (config.get("method_version") == "drivespeed-auto-full-v2"
+                            and job["name"] == "sustained" and case["status"] == "partial"
+                            and case.get("reason") == "incomplete_measurement"
+                            and set(case.get("missing_core", [])) == {"sustained.post_cache_stability"}):
+                        continue
                     break
             result["outcome"] = (
                 "complete"

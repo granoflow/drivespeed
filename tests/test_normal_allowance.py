@@ -1,6 +1,8 @@
 """Exact finite normal-speed proposals preserve prior accounting; synthetic only."""
 import contextlib
+import copy
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -92,3 +94,50 @@ class NormalAllowanceTests(unittest.TestCase):
             ledger.return_value.reserve.assert_not_called()
             for operation in (lock, fio, cleanup):
                 operation.assert_not_called()
+
+    def test_missing_cache_goal_continues_but_initialization_or_io_failure_stops(self):
+        for failure in ("cache_only", "initialization", "io_error"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as root:
+                root = Path(root)
+                target = fixtures.AuthorizationTests().target()
+                target["path"] = str(root / "target")
+                Path(target["path"]).mkdir()
+                ledger = WriteAllowance(root / "ledger")
+                ledger.import_existing(target, 16*GIB, 0, 16*GIB, "fixture finite run")
+                args = benchmark.parser().parse_args(["--disk", target["path"], "--output", str(root / "out")])
+                cases = {case["name"]:case for case in fixtures.complete_result()["cases"]}
+                def produced(fio, job, *unused):
+                    case = copy.deepcopy(cases[job["name"]])
+                    if job["name"] == "sustained":
+                        case.update(status="partial", reason="incomplete_measurement",
+                                    metrics_complete=False, missing_core=["sustained.post_cache_stability"])
+                        if failure == "initialization":
+                            case["missing_core"].append("sustained.initialization")
+                        elif failure == "io_error":
+                            case.update(status="failed", reason="run_failed")
+                    return case
+                with contextlib.ExitStack() as stack:
+                    replacements = {
+                        "WriteAllowance":dict(return_value=ledger), "target_info":dict(return_value=target),
+                        "check_target":dict(return_value=target), "collect_hardware":dict(return_value={}),
+                        "load_reference_cache":dict(return_value=({}, {})), "apply_hardware_specs":{},
+                        "DeviceLock":dict(return_value=contextlib.nullcontext()),
+                        "ensure_fio":dict(return_value={"path":"never-launched", "engines":"posixaio"}),
+                        "select_engine":dict(return_value="posixaio"),
+                        "observe_quality":dict(return_value={"status":"quiet_observed"}),
+                        "confirm_write":dict(side_effect=lambda t,c,a,text:plan_hash(t,c,a)),
+                        "trash_owned":{}, "clean_stale_workspaces":dict(return_value=[]),
+                        "run_case":dict(side_effect=produced),
+                    }
+                    mocks = {name:stack.enter_context(patch.object(benchmark,name,**options))
+                             for name,options in replacements.items()}
+                    stack.enter_context(patch.object(benchmark.os,"ftruncate"))
+                    stack.enter_context(patch("report.render_report", return_value={"html":"fixture.html","pdf":None}))
+                    stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                    stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                    code = benchmark.execute(args, messages("en"), messages("en"))
+                result = json.loads((root / "out/results.json").read_text())
+                self.assertEqual(code, 5 if failure == "io_error" else 6)
+                self.assertEqual(mocks["run_case"].call_count, 11 if failure == "cache_only" else 1)
+                self.assertEqual(result["outcome"], "partial")
+                self.assertFalse(result["completeness"]["complete"])

@@ -274,6 +274,21 @@ class CacheMeasurementTests(unittest.TestCase):
         self.assertIn('data-metric="tail_mean_mb_s"', source)
         self.assertIn("2.87", source)
         result["cases"][0]["metrics_complete"] = False
+        result["actual_write_bytes"] = None
+        report.render_report(result, output, "zh-CN", messages("zh-CN"))
+        self.assertIn(messages("zh-CN")["partial_write"], (output / "report.html").read_text())
+
+    def test_partial_cache_goal_does_not_hide_known_write_accounting(self):
+        result = {
+            "outcome": "partial",
+            "cases": [{"name": "sustained", "status": "partial", "metrics_complete": False}],
+            "actual_write_bytes": 1000,
+            "accounted_write_bytes": 1000,
+        }
+        output = new_dir()
+        report.render_report(result, output, "zh-CN", messages("zh-CN"))
+        self.assertNotIn(messages("zh-CN")["partial_write"], (output / "report.html").read_text())
+        result["actual_write_bytes"] = None
         report.render_report(result, output, "zh-CN", messages("zh-CN"))
         self.assertIn(messages("zh-CN")["partial_write"], (output / "report.html").read_text())
 
