@@ -2,10 +2,10 @@
 
 Python 3.10+。脚本只使用标准库，不需要 `.venv`。`--help`、`--dry-run` 与 `report.py` 不安装 fio、不访问网络、不跑 I/O。
 
-`benchmark.py` 默认运行唯一的正常自动完整测速（当前方法 `drivespeed-auto-full-v2`）；测速报告交付后，可另行授权容量与读写完整性检查。target必填，接受用户显式选定的内置/外置本地已挂载可读写目录；output必须是新目录，默认diskbench-results；language为报告语言，ui-language为提示语言，默认都传当前对话语言，不另问语言；仅用户明确要求才改报告语言；format为html/pdf。messages/ui-messages提供完整翻译。keep-test-files保留自有文件。型号、接口事实与参考文件参数沿用，不改变工作负载。
+`benchmark.py` 默认运行唯一的正常自动完整测速（当前方法 `drivespeed-auto-full-v2`）；测速报告交付后，可另行授权容量与读写完整性检查。`--disk` 传用户所选磁盘的挂载路径，旧 `--target` 保持兼容；用户只选磁盘名称，挂载路径由 Agent 解析，不要求用户输入目录。系统盘根不可写时选同盘可写用户目录，不提权；output必须是新目录，默认diskbench-results；language为报告语言，ui-language为提示语言，默认都传当前对话语言，不另问语言；仅用户明确要求才改报告语言；format为html/pdf。messages/ui-messages提供完整翻译。keep-test-files保留自有文件。型号、接口事实与参考文件参数沿用，不改变工作负载。
 
 ```bash
-python3 scripts/benchmark.py --target /path/to/selected-directory --output /path/to/new-results --language zh-CN --ui-language zh-CN --dry-run
+python3 scripts/benchmark.py --disk /path/to/selected-volume --output /path/to/new-results --language zh-CN --ui-language zh-CN --dry-run
 ```
 
 预演不安装、不写缓存/台账/输出、不创建锁或测试文件、不调用fio。返回实际硬件、自动plan、已有授权状态与绑定目标/计划/台账revision的plan_sha256。空间/余额不足时停止，不创建象征性小负载。
@@ -113,3 +113,7 @@ AI Agent 优先读取 `results.json` 的原始数值。读取 HTML 时可用 `#r
 HTML/PDF 的报告对象、硬盘名称及文档标题使用已核实商品名，硬件表另保留系统原型号。设备资料按官方资料、独立评测分组，展示全部已核实来源的名称、原链接、发布者、适用范围和核对日期；同日可合并日期，不同日逐项保留。无有效链接时省略整个来源区，可靠商品名仍保留。这些资料不改变性能评分或测量值；主控系列标识不据此升级为精确芯片型号。网站是否已支持对应展示须以其实际部署版本为准。
 
 Web 维护命令的 `product_profile_import` 是离线 DB-only 资料导入，不是模型调用或网页抓取。`GET /api/v1/benchmarks/ID/product-profile` 仅对当前可公开报告读取资料；未关联时返回 null，隐藏/撤回报告不提供该资源。
+
+## 临时目录与历史残留
+
+程序在所选磁盘根目录（系统盘不可写时为同盘可写位置）创建 `.diskbench-<run_id>`，仅包含 payload.bin、README.txt 和归属标记。报告保存在独立 output，不随临时目录清理。正式执行取得物理盘独占锁后静默检查该位置的历史目录；仅精确匹配标记、根/目录身份、当前用户及普通单链接文件，且未明确 retain 的目录自动移入系统废纸篓。未知/未标记的旧目录、链接、夹带个人文件的目录保留，不递归搜索整盘，也不解锁正在进行的测试。结果的 startup_cleanup 记录实际处理及失败；预演不清理，累计写入台账不因清理而重置。废纸篓数据仍占空间，程序不自动清空；Windows 按既有保留策略处理，不宣称已释放。

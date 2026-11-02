@@ -624,6 +624,90 @@ class DeviceLock:
         self.paths = []
 
 
+WORKSPACE_MARKER = ".drivespeed-owner.json"
+WORKSPACE_README = """# DriveSpeed temporary test data / DriveSpeed 临时测试数据
+
+This folder contains only DriveSpeed-generated disk test data, not your report.
+Do not edit it or put personal files here. Do not remove it during a running test.
+After the test has stopped, you may remove this entire folder when cleaning up.
+DriveSpeed normally moves it to the system Trash; emptying Trash is your choice.
+
+本目录只存放 DriveSpeed 生成的测速数据，不是测试报告。
+请勿修改或放入个人文件；测试进行中请勿删除。
+确认测试已经停止后，清理磁盘时可以删除整个目录。
+程序默认移入系统废纸篓，不会自动清空废纸篓。
+"""
+
+
+def mark_workspace(directory, target, run_id, retain=False):
+    """Record exact identity before creating any large test file."""
+    path = Path(directory)
+    info = path.stat()
+    marker = dict(tool="drivespeed-workspace-v1", run_id=run_id,
+                  target_path=target["path"], target_inode=target["inode"],
+                  target_device=target["st_dev"], workspace_inode=info.st_ino,
+                  retain=bool(retain))
+    for name, content in ((WORKSPACE_MARKER, json.dumps(marker)),
+                          ("README.txt", WORKSPACE_README)):
+        with (path / name).open("x", encoding="utf-8") as stream:
+            stream.write(content)
+
+
+def workspace_identity(directory, target):
+    """Recognize only our exact, unchanged flat workspace; never follow links."""
+    path = Path(directory)
+    if (path.parent != Path(target["path"])
+            or not re.fullmatch(r"\.diskbench-[0-9a-f]{32}", path.name)):
+        return None
+    info = path.lstat()
+    if (not stat_module.S_ISDIR(info.st_mode) or info.st_dev != target["st_dev"]
+            or (hasattr(os, "getuid") and info.st_uid != os.getuid())):
+        return None
+    entries = list(path.iterdir())
+    if {item.name for item in entries} - {WORKSPACE_MARKER, "README.txt", "payload.bin"}:
+        return None
+    for item in entries:
+        entry = item.lstat()
+        if (not stat_module.S_ISREG(entry.st_mode) or entry.st_nlink != 1
+                or entry.st_dev != info.st_dev
+                or (hasattr(os, "getuid") and entry.st_uid != os.getuid())):
+            return None
+    marker = path / WORKSPACE_MARKER
+    if not marker.exists() or marker.stat().st_size > 4096:
+        return None
+    fd = os.open(marker, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, encoding="utf-8") as stream:
+        try:
+            value = json.loads(stream.read(4097))
+        except (ValueError, RecursionError):
+            return None
+    if (not isinstance(value, dict) or value.get("tool") != "drivespeed-workspace-v1"
+            or value.get("run_id") != path.name.removeprefix(".diskbench-")
+            or value.get("target_path") != target["path"]
+            or value.get("target_inode") != target["inode"]
+            or value.get("target_device") != target["st_dev"]
+            or value.get("workspace_inode") != info.st_ino
+            or type(value.get("retain")) is not bool):
+        return None
+    return value
+
+
+def clean_stale_workspaces(target):
+    """Called only under the physical-device lock, never during dry-run."""
+    outcomes = []
+    for path in Path(target["path"]).glob(".diskbench-*"):
+        try:
+            identity = workspace_identity(path, target)
+            if identity is None or identity["retain"]:
+                outcomes.append(dict(path=str(path), status="retained"))
+                continue
+            trash_owned(path, target)
+            outcomes.append(dict(path=str(path), status="trashed"))
+        except (OSError, ValueError, BenchError, subprocess.SubprocessError) as exc:
+            outcomes.append(dict(path=str(path), status="cleanup_failed", detail=str(exc)))
+    return outcomes
+
+
 def trash_owned(directory, target):
     check_target(target)
     path = Path(directory)
@@ -631,6 +715,7 @@ def trash_owned(directory, target):
         path.is_symlink()
         or path.parent != Path(target["path"])
         or not path.name.startswith(".diskbench-")
+        or workspace_identity(path, target) is None
     ):
         raise BenchError("unsafe_target", "Refusing cleanup outside owned directory")
     if platform.system() == "Darwin":

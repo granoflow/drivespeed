@@ -29,6 +29,8 @@ from system_io import (
     ensure_fio,
     target_info,
     trash_owned,
+    mark_workspace,
+    clean_stale_workspaces,
     stop_process,
     unsafe_path_component,
     observe_quality,
@@ -55,9 +57,9 @@ from write_allowance import WriteAllowance, plan_hash
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--target",
+        "--target", "--disk",
         required=True,
-        help="Explicit readable/writable directory on local mounted storage (internal or external); never a raw device",
+        help="Selected mounted disk root (or a writable directory for compatibility); never a raw device",
     )
     p.add_argument(
         "--output",
@@ -492,6 +494,8 @@ def execute(args, text, report_text):
     attempted = set()
     with DeviceLock(target):
         try:
+            check_target(target)
+            result["startup_cleanup"] = clean_stale_workspaces(target)
             progress.emit("dependency", force=True)
             fio = ensure_fio(output, progress)
             engine = select_engine(fio)
@@ -518,6 +522,7 @@ def execute(args, text, report_text):
             candidate.mkdir(mode=0o700)
             work = candidate
             result["test_directory"] = str(work)
+            mark_workspace(work, target, run_id, retain=args.keep_test_files or platform.system() == "Windows")
             fd = os.open(
                 work / "payload.bin",
                 os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),

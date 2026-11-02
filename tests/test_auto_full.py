@@ -432,13 +432,14 @@ class EntryAndQualityTests(unittest.TestCase):
                  patch.object(benchmark, "load_reference_cache", return_value=({}, {})), \
                  patch.object(benchmark, "apply_hardware_specs"), \
                  patch.object(benchmark, "ensure_fio") as install, \
+                 patch.object(benchmark, "clean_stale_workspaces") as cleanup, \
                  patch.object(benchmark, "DeviceLock") as lock, \
                  patch.object(benchmark, "observe_quality") as observe, \
                  patch.object(system_io, "capture") as command, contextlib.redirect_stdout(output):
                 self.assertEqual(benchmark.execute(args, messages("en"), messages("en")), 0)
             self.assertFalse(ledger.directory.exists())
             self.assertIn("plan_sha256", json.loads(output.getvalue()))
-            for operation in (install, lock, observe, command):
+            for operation in (install, lock, observe, command, cleanup):
                 operation.assert_not_called()
 
     def test_two_windows_and_boot_counter_quality(self):
