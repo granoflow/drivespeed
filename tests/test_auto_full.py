@@ -23,6 +23,7 @@ from community_store import CommunityStore
 
 def complete_result(cap=16 * GIB):
     config = auto_plan(2_000 * GIB, 1_000 * GIB, cap, cap)
+    config["method_version"] = "drivespeed-auto-full-v1"
     cases = []
     for job in config["jobs"]:
         active = ("read", "write") if job["rw"] == "randrw" else (
@@ -394,6 +395,7 @@ class EntryAndQualityTests(unittest.TestCase):
                  patch.object(benchmark,"confirm_write",side_effect=lambda target,config,allowance,text:plan_hash(target,config,allowance)), \
                  patch.object(benchmark.os,"ftruncate"), \
                  patch.object(benchmark,"run_case",side_effect=produced) as producer, \
+                 patch.object(benchmark,"auto_plan",side_effect=lambda *values:dict(auto_plan(*values),method_version="drivespeed-auto-full-v1")), \
                  patch.object(benchmark,"trash_owned"), \
                  patch("report.render_report",return_value={"html":"fixture.html","pdf":None}), \
                  contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(io.StringIO()):

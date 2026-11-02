@@ -158,7 +158,7 @@ def render_comparison(facts, result, output, language, report_text, requested_fo
 <section><h2>{esc(text['local_conditions'])}</h2><dl>{model_rows}{condition_rows}</dl></section>{''.join(sections)}
 {evaluation or '<section class="comparison-interpretation"><h2>'+esc(text['interpretation'])+'</h2><p>'+esc(text['no_interpretation'])+'</p></section>'}
 <div class="comparison-ending"><section class="comparison-method"><h2>{esc(text['method'])}</h2><p>{esc(text['formula'])}</p><p>{esc(text['confounders'])}</p><p>{esc(text['historical'])}</p><p>{esc(text['authenticity'])}</p></section>
-{agent_usage_html()}
+{agent_usage_html(text=report_text)}
 <footer><a href="report.html">{esc(text['back'])}</a> · DriveSpeed · <a href="https://anz.tv/" rel="noopener noreferrer">A New Zero</a></footer></div></main></body></html>'''
     output.mkdir(parents=True, exist_ok=True)
     source, pdf_path = output/"comparison.html", output/"comparison.pdf"

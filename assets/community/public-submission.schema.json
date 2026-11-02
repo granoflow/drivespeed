@@ -34,7 +34,8 @@
         "method_version": {
           "enum": [
             "drivespeed-file-v1",
-            "drivespeed-auto-full-v1"
+            "drivespeed-auto-full-v1",
+            "drivespeed-auto-full-v2"
           ]
         },
         "fio_version": {
@@ -992,5 +993,65 @@
     "cases",
     "attribution",
     "integrity_notice"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "tool": {
+            "properties": {
+              "method_version": {
+                "const": "drivespeed-auto-full-v2"
+              }
+            },
+            "required": [
+              "method_version"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "tool"
+        ]
+      },
+      "then": {
+        "required": [
+          "quality"
+        ],
+        "properties": {
+          "cases": {
+            "contains": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "const": "sustained"
+                },
+                "cache": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "observed"
+                    },
+                    "post_cache_mb_s": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "post_cache_mb_s"
+                  ]
+                }
+              },
+              "required": [
+                "name",
+                "cache"
+              ]
+            },
+            "type": "array"
+          }
+        }
+      }
+    }
   ]
 }

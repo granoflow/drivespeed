@@ -233,7 +233,7 @@ class CacheMeasurementTests(unittest.TestCase):
             config["file_bytes"] + config["reserve_bytes"], 400 * 1024**3
         )
         self.assertGreaterEqual(config["reserve_bytes"], 50 * 1024**3)
-        self.assertEqual(config["method_version"], "drivespeed-auto-full-v1")
+        self.assertEqual(config["method_version"], "drivespeed-auto-full-v2")
         install.assert_not_called()
 
     def test_cache_planning_flags_are_rejected_before_execution(self):
@@ -673,7 +673,7 @@ class ReferenceAndSummaryTests(unittest.TestCase):
                 )
         self.assertEqual(validate_reference_data({"items": []})["items"], [])
 
-    def test_partial_references_distinguish_other_devices_and_candidates(self):
+    def test_report_omits_peers_candidates_and_mismatched_device_facts(self):
         result = {
             "hardware": {"drive": {"model": "Drive B 2TB"}},
             "cases": [],
@@ -695,13 +695,13 @@ class ReferenceAndSummaryTests(unittest.TestCase):
                 ],
             },
         }
+        original = json.dumps(result, sort_keys=True)
         source = report.render_references(result, messages("en"), {})
         self.assertNotIn('data-relationship="device"', source)
-        self.assertIn('data-relationship="peer"', source)
-        self.assertIn('data-relationship="candidate"', source)
-        self.assertIn("Other drive &lt;test&gt;", source)
-        self.assertIn("Not measured", source)
-        self.assertIn("40.00 Gb/s", source)
+        self.assertNotIn('data-relationship="peer"', source)
+        self.assertNotIn('data-relationship="candidate"', source)
+        self.assertEqual(source, "")
+        self.assertEqual(json.dumps(result, sort_keys=True), original)
         self.assertEqual(
             report.render_references({"references": {"items": []}}, messages("en"), {}),
             "",

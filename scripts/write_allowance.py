@@ -199,7 +199,20 @@ class WriteAllowance:
             scope_id, cap, charged, revision, run_cap = row
             actual = dict(present=expected["present"], scope_id=scope_id if expected["present"] else None,
                           revision=revision, run_cap=run_cap, remaining=cap - charged)
-            if actual != expected or amount > min(run_cap, cap - charged):
+            if actual != expected:
+                raise BenchError("unsafe_target", "Write authorization changed or exhausted")
+            if config.get("method_version") == "drivespeed-capacity-v1":
+                # This exact finite extension is part of the explicitly confirmed
+                # capacity plan. Keep the scope and all historical charges intact.
+                extra = _bytes(config.get("additional_authorized_bytes"))
+                new_run_cap = _bytes(config.get("capacity_run_cap_bytes"))
+                if (not expected["present"] or extra != max(0, amount - (cap - charged))
+                        or new_run_cap != max(run_cap, amount)):
+                    raise BenchError("unsafe_target", "Invalid capacity authorization proposal")
+                cap = _bytes(cap + extra)
+                run_cap = new_run_cap
+                db.execute("UPDATE scopes SET cap=?,run_cap=? WHERE scope_id=?", (cap, run_cap, scope_id))
+            if amount > min(run_cap, cap - charged):
                 raise BenchError("unsafe_target", "Write authorization changed or exhausted")
             db.execute("UPDATE scopes SET charged=charged+?,revision=revision+1 WHERE scope_id=?", (amount, scope_id))
             db.execute("INSERT INTO reservations VALUES(?,?,?,?,NULL,'reserved')", (run_id, scope_id, digest, amount))

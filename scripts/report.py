@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Render trusted measurement numbers into an escaped, offline HTML/PDF report."""
 
+from workloads import AUTO_METHOD, AUTO_METHODS
 import argparse
 import html
 import json
@@ -16,8 +17,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from progress import ASSETS, language_default, messages
-from workloads import sustained_summary, cache_assessment, job_label, collection_status
-from performance_rating import interface_catalog, link_reference, component_summary
+from workloads import sustained_summary, cache_assessment, job_label, collection_status, core_completeness
+from performance_rating import link_reference, component_summary, upgrade_parameters
 from reference_data import (
     load_reference_data,
     validate_reference_data,
@@ -38,36 +39,119 @@ def number(value):
     return f"{value:,.2f}"
 
 
-def render_hardware_assessment(result, text):
-    """Show detected segments, rated device specifications and evidence-bound grades."""
-    hardware = result.get("hardware", {})
-    references = validate_reference_data(result.get("references") or {"items": []})
-    body = []
-    known = [link_reference(link) for link in hardware.get('links', [])]
-    minimum = min((fact['mb_s'] for fact in known if fact), default=None)
-    for link in hardware.get("links", []):
-        fact = link_reference(link)
-        if not fact:
+
+def controller_identity(hardware, text):
+    """Preserve identified series separately from unbound discovery clues."""
+    controller = hardware.get('controller', {})
+    model = controller.get('model')
+    if model:
+        return model + (' · ' + text['controller_series'] if controller.get('precision') == 'series' else '')
+    candidates = controller.get('candidates') or []
+    if len(candidates) == 1:
+        return str(candidates[0]) + ' · ' + text['controller_candidate']
+    return text['device_unknown']
+
+
+def external_connection(hardware):
+    """Use only the existing accepted access-interface provenance and parser."""
+    from interface_types import confirmed_interface
+    access = hardware.get('access_interface')
+    if access is None:
+        return None
+    if not isinstance(access, dict) or access.get('source') not in ('user', 'ioreg:target-ancestor'):
+        raise ValueError('Invalid access interface')
+    return confirmed_interface(access.get('name'))['name']
+
+def device_identity_rows(result, text, refs, show_computer_model, product_profile):
+    """Device names and their provenance, retaining private-model display choice."""
+    hardware = result.get('hardware', {})
+    rows = []
+    components = ('computer', 'drive', 'enclosure', 'controller') if show_computer_model else ('drive', 'enclosure', 'controller')
+    for component in components:
+        item = hardware.get(component, {})
+        raw_model = item.get('model')
+        model = raw_model or text['device_unknown']
+        origin = 'user' if item.get('source') == 'user' else 'reference' if item.get('source') == 'reference' else 'system' if raw_model else 'unavailable'
+        origin_label = text['source_unknown'] if origin == 'unavailable' else text['source_' + origin]
+        if component == 'controller':
+            model = controller_identity(hardware, text)
+        if component == 'drive' and product_profile is not None:
+            model = product_profile['display_name']
+            origin = 'reference'
+            origin_label = text['product_resources']
+        specs = [spec['interface'] for spec in refs.get('hardware_specs', [])
+                 if spec['component'] == component and spec['model'] == model
+                 and refs.get('for_drive_model') == hardware.get('drive', {}).get('model')]
+        parameters = f'<bdi dir="ltr">{esc(model)}</bdi>'
+        if specs:
+            parameters += ' · ' + esc(text['device_supported']) + ': ' + esc(' / '.join(specs))
+        if origin != 'unavailable':
+            parameters += ' · ' + esc(origin_label)
+        rows.append(f'<tr><th>{esc(text[component + "_model"])}</th><td data-device-origin="{origin}">{parameters}</td></tr>')
+        if component == 'drive' and product_profile is not None:
+            original_origin = 'user' if item.get('source') == 'user' else 'system'
+            rows.append(f'<tr><th>{esc(text["original_model"])}</th><td data-device-origin="{original_origin}"><bdi dir="ltr">{esc(raw_model)}</bdi> · {esc(text["source_" + original_origin])}</td></tr>')
+    return rows
+
+
+def render_device_parameters(result, text, summary, show_computer_model=False, product_profile=None):
+    """Only this device's identities, observed connection and exact official specifications."""
+    hardware = result.get('hardware', {})
+    refs = validate_reference_data(result.get('references') or {'items': []})
+    rows = device_identity_rows(result, text, refs, show_computer_model, product_profile)
+    access = external_connection(hardware)
+    if access:
+        provenance = text['source_user'] if hardware['access_interface']['source'] == 'user' else text['source_system']
+        rows.append(f'<tr><th>{esc(text["device_external"])}</th><td><bdi dir="ltr">{esc(access)}</bdi> · {esc(provenance)}</td></tr>')
+    for link in hardware.get('links', []):
+        if access and link.get('kind') in ('usb', 'thunderbolt'):
             continue
-        state = text["link_negotiated"] if link.get("state") == "negotiated" else text["link_reported"]
-        maximum = link_reference(dict(kind=link.get('kind'), gt_s=link.get('max_gt_s'), lanes=link.get('max_lanes')))
-        if maximum:
-            state += ' · ' + text['link_max'] + ': ' + maximum['label']
-        if minimum == fact['mb_s']:
-            state += ' · ' + text['link_minimum']
-        body.append(f'<tr><th>{esc(fact["label"])}</th><td>{esc(state)}</td><td>{number(fact["mb_s"])} MB/s · {esc(text["link_" + fact["basis"]])}</td></tr>')
-    links = '<table><tbody>' + ''.join(body) + '</tbody></table>' if body else '<p>' + esc(text['link_unknown']) + '</p>'
-    specs = []
-    if references.get('for_drive_model') == hardware.get('drive', {}).get('model'):
-        for spec in references.get('hardware_specs', []):
-            if spec['model'] != hardware.get(spec['component'], {}).get('model'):
-                continue
-            specs.append(f'<tr><th>{esc(text[spec["component"] + "_model"])}</th><td>{esc(spec["model"])} · {esc(spec["interface"])}<br>{esc(spec["conditions"])}</td><td><a href="{esc(spec["source_url"])}" rel="noreferrer">{esc(spec["source_label"])}</a> · {esc(references.get("checked_at", ""))}</td></tr>')
-    catalog = interface_catalog()
-    for chip in catalog.get('controllers', []):
-        if chip['model'] == hardware.get('controller', {}).get('model'):
-            specs.append(f'<tr><th>{esc(text["controller_model"])}</th><td>{esc(chip["model"])} · {esc(chip["interface"])}</td><td><a href="{esc(chip["source_url"])}" rel="noreferrer">ASMedia</a> · {esc(catalog["checked_at"])}</td></tr>')
-    spec_html = '<table><tbody>' + ''.join(specs) + '</tbody></table>' if specs else ''
+        fact = link_reference(link)
+        if fact:
+            state = text['device_negotiated'] if link.get('state') == 'negotiated' else text['device_reported']
+            label = text['device_internal_segment'] if access and link.get('kind') == 'pcie' else text['device_connection']
+            rows.append(f'<tr><th>{esc(label)}</th><td><bdi dir="ltr">{esc(fact["label"])}</bdi> · {esc(state)}</td></tr>')
+    if not access and not any(link_reference(link) for link in hardware.get('links', [])):
+        rows.append(f'<tr><th>{esc(text["device_connection"])}</th><td>{esc(text["device_unknown"])}</td></tr>')
+    limits = connection_limits(result, refs)
+    if limits:
+        for part in limits['parts']:
+            for item in part['sources']:
+                label = text['device_supported'] if item['metric'] == 'interface_gbps' else text['device_rated_read' if 'read' in item['metric'] else 'device_rated_write']
+                value = f'<bdi dir="ltr">{number(item["value"])} {esc(item["unit"])}</bdi>'
+                component = 'device_host' if part['component'] == 'computer' else 'util_name_' + part['component']
+                name = text.get(component, text['enclosure_model'])
+                rows.append(f'<tr><th>{esc(name)} · {esc(label)}</th>'
+                            f'<td>{value} · <a href="{esc(item["source_url"])}" rel="noreferrer">{esc(text["rating_source"])}</a> · <bdi dir="ltr">{esc(refs.get("checked_at", ""))}</bdi></td></tr>')
+    advice = upgrade_parameters(result, summary)
+    recommendation = ''
+    if advice:
+        target = (f'<a href="{esc(advice["interface"]["source_url"])}" rel="noreferrer"><bdi dir="ltr">{esc(advice["interface"]["label"])}</bdi></a>') if 'interface' in advice else esc(text['device_target_rates']).format(
+            read=f'<bdi dir="ltr">{number(advice["read_mb_s"])} MB/s</bdi>',
+            write=f'<bdi dir="ltr">{number(advice["write_mb_s"])} MB/s</bdi>')
+        recommendation = (f'<h3>{esc(text["device_upgrade"])}</h3><p>{esc(text["util_name_" + advice["component"]])}: {target}</p>'
+                          f'<p>{esc(text["device_compatibility"])}</p>')
+    return (f'<table class="device-parameters"><thead><tr>'
+            f'<th>{esc(text["device_part"])}</th><th>{esc(text["device_parameter"])}</th></tr></thead><tbody>{"".join(rows)}</tbody></table>{recommendation}')
+
+
+
+def render_controller_research(result, text):
+    observation = result.get('hardware_observation', {})
+    research = observation.get('research', {}) if isinstance(observation, dict) else {}
+    sources = research.get('candidates', [])
+    if not sources:
+        return ''
+    links = []
+    for source in sources:
+        url = urlsplit(source['url'])
+        if url.scheme != 'https' or not url.hostname or url.username or url.password:
+            raise ValueError('Controller research requires public HTTPS sources')
+        links.append(f'<li><a href="{esc(source["url"])}" rel="noreferrer">{esc(source["model"])}</a></li>')
+    return f'<h3>{esc(text["controller_research_title"])}</h3><p>{esc(text["controller_research_note"])}</p><ul>{"".join(links)}</ul>'
+
+def render_hardware_assessment(result, text, show_computer_model=False, product_profile=None):
+    """Keep device-specific parameters primary and rating calculations optional."""
     summary = component_summary(result)
     quality_limited = summary['status'] == 'measurement_quality'
     rows = []
@@ -91,14 +175,16 @@ def render_hardware_assessment(result, text):
     if summary['bottleneck']:
         comment = comment.replace('{component}', text['util_name_' + summary['bottleneck']])
     rating_table = f'<table class="performance-ratings"><tbody>{"".join(rows)}</tbody></table>' if rows else ''
-    catalog_rows = []
-    for item in catalog['items']:
-        link = dict(item, lanes=4) if item['kind'] == 'pcie' else item
-        fact = link_reference(link)
-        catalog_rows.append(f'<tr><th>{esc(fact["label"])}</th><td>{number(fact["mb_s"])} MB/s · {esc(text["link_" + fact["basis"]])}</td><td><a href="{esc(fact["source_url"])}" rel="noreferrer">{esc(text["rating_source"])}</a></td></tr>')
-    return (f'<section id="hardware-assessment"><h2>{esc(text["hardware_assessment"])}</h2><p>{esc(text["link_scope"])}</p>{links}{spec_html}'
-            f'<h3>{esc(text["util_title"])}</h3>{rating_table}<p class="component-comment">{esc(comment)}</p><p>{esc(text["util_scope"])}</p>'
-            f'<details><summary>{esc(text["interface_catalog"])}</summary><p>{esc(text["link_scope"])} · {esc(catalog["checked_at"])}</p><table><tbody>{"".join(catalog_rows)}</tbody></table></details></section>')
+    parameters = render_device_parameters(result, text, summary, show_computer_model, product_profile)
+    message = text['device_no_upgrade'] if quality_limited else comment
+    observation = result.get('hardware_observation', {})
+    stamp = observation.get('observed_at') if isinstance(observation, dict) else None
+    observed = '<p class="muted">' + esc(text['device_observed_note'].format(date=stamp)) + '</p>' if stamp else ''
+    return (f'<section id="hardware-assessment"><h2>{esc(text["hardware_assessment"])}</h2>{observed}{parameters}'
+            f'<p class="component-comment">{esc(message)}</p>'
+            f'<details class="device-rating-evidence"><summary>{esc(text["device_evidence"])}</summary>'
+            f'{render_controller_research(result, text)}<h3>{esc(text["util_title"])}</h3>{rating_table}'
+            f'{("<p>" + esc(text["util_scope"]) + "</p>") if not quality_limited else ""}</details></section>')
 
 
 def render_user_input(result, language, text):
@@ -249,7 +335,7 @@ def render_peak_comparison(result, text):
         samples = [p["mb_s"] for p in case.get("series", [])
                    if p.get("direction") == direction and isinstance(p.get("mb_s"), (int, float))
                    and math.isfinite(p["mb_s"]) and p["mb_s"] >= 0]
-        timing_ok = result.get("tool", {}).get("method_version") != "drivespeed-auto-full-v1" or collection_status(case) == "collected"
+        timing_ok = result.get("tool", {}).get("method_version") not in AUTO_METHODS or collection_status(case) == "collected"
         peak = max(samples) if samples and timing_ok else None
         average = case.get("metrics", {}).get(direction, {}).get("mb_s")
         cap = host.get(direction + "_mb_s")
@@ -309,6 +395,7 @@ def render_connection_reference(result, references, text):
             f'<td>{esc(actual)}<small>{esc(text.get(case.get("name"), ""))}</small></td><td dir="ltr">{esc(gap)}</td></tr>'
         )
     component_rows, used = [], []
+    hardware = result.get("hardware", {})
     for part in limits["parts"]:
         controller_fallback = (
             part["component"] == "enclosure" and limits["enclosure_uses_controller"]
@@ -357,9 +444,19 @@ def render_connection_reference(result, references, text):
             )
             if link not in source_links:
                 source_links.append(link)
+        display_model = part['model'] or text['source_unknown']
+        if part['component'] == 'controller':
+            display_model = controller_identity(hardware, text)
+            if hardware.get('controller', {}).get('model') and not part['sources']:
+                access = external_connection(hardware)
+                rates = [esc(text['controller_ratings_pending'])]
+                if access:
+                    rates.insert(0, '<bdi dir="ltr">' + esc(access) + '</bdi>')
+                role = text['controller_series'] if hardware['controller'].get('precision') == 'series' else text['source_system']
+                source_links = [esc(text['source_system'])]
         component_rows.append(
             f'<tr data-path-component="{part["component"]}"><th scope="row">'
-            f"{esc(text['path_' + part['component']])}<small>{esc(part['model'] or text['source_unknown'])}</small></th>"
+            f"{esc(text['path_' + part['component']])}<small>{esc(display_model)}</small></th>"
             f"<td>{'<br>'.join(rates)}</td><td>{esc(role)}</td><td>{' · '.join(source_links) if source_links else esc(text['controller_source_below'] if controller_fallback else text['reference_missing'])}</td></tr>"
         )
     headers = "".join(
@@ -402,6 +499,8 @@ def render_references(result, text, assessment):
         if item in used_items:
             continue
         relation = item["relationship"]
+        if relation != "device":
+            continue
         current = result.get("hardware", {}).get(item["component"], {}).get("model")
         if relation == "device" and (
             not current or normalize(current) != normalize(item["model"])
@@ -649,6 +748,24 @@ def render_readable_results(result, text):
     )
 
 
+def render_capacity_check(result, text):
+    check = result.get("capacity_check")
+    if not isinstance(check, dict):
+        return ""
+    from capacity_check import completeness
+    passed = check.get("outcome") == "complete" and completeness(check)["complete"]
+    cases = {case.get("name"): case for case in check.get("cases", [])}
+    written = cases.get("integrity_write", {}).get("metrics", {}).get("write", {}).get("bytes", 0)
+    planned = check.get("plan", {}).get("file_bytes", 0)
+    verified = number(planned / 1073741824) if passed else "—"
+    coverage = text["capacity_coverage"].format(planned=number(planned / 1073741824),
+                                              written=number(written / 1073741824), verified=verified)
+    return ('<section id="capacity-check"><h2>' + esc(text["capacity_heading"]) + '</h2><p><strong>'
+            + esc(text["capacity_ok"] if passed else text["capacity_not_completed"])
+            + '</strong></p><p>' + esc(coverage) + '</p><p class="muted">'
+            + esc(text["capacity_limits"]) + '</p></section>')
+
+
 def render_diagnostics(result, text):
     cases = result.get("cases", [])
     mapping = [c for c in cases if c.get("label_key") == "mapping_read"]
@@ -771,67 +888,14 @@ def render_report(result, output, language, text, requested_format="html", compa
         f'<p>{esc(text["translation_promo"])}</p></div>'
     )
     hardware = result.get("hardware", {})
-    hardware_rows = []
-    for key, label in (
-        ("computer", "computer_model"),
-        ("drive", "drive_model"),
-        ("enclosure", "enclosure_model"),
-        ("controller", "controller_model"),
-    ):
-        if key == "computer" and not show_computer_model:
-            continue
-        item = hardware.get(key, {})
-        model = (item.get("matching_model") or item.get("model")) if key in ("computer", "drive") else item.get("model")
-        if key == "controller" and not model:
-            candidates = item.get("candidates") or hardware.get("enclosure", {}).get(
-                "bridge_candidates", []
-            )
-            if candidates:
-                model = " / ".join(candidates) + " · " + text["controller_candidate"]
-        source = item.get("source", "unavailable")
-        if key == "drive" and product_profile is not None:
-            model = product_profile["display_name"]
-        if key == "controller" and model and item.get("precision") == "series" and source == "ioreg:target-ancestor":
-            model += " · " + text["system_identifier"]
-        source_text = (
-            text["source_user"]
-            if source == "user"
-            else text["source_unknown"]
-            if source == "unavailable"
-            else text["source_reference"] if source == "reference"
-            else text["source_system"]
-        )
-        if key == "drive" and product_profile is not None:
-            original_drive_source = source_text
-            source_text = text["product_resources"]
-        hardware_rows.append(
-            f'<tr><th scope="row">{esc(text[label])}</th><td>{esc(model or text["source_unknown"])}</td><td class="muted">{esc(source_text) if item.get("model") else ""}</td></tr>'
-        )
-    if product_profile is not None:
-        original = hardware.get("drive", {}).get("matching_model") or hardware.get("drive", {}).get("model")
-        hardware_rows.append(f'<tr><th scope="row">{esc(text["original_model"])}</th><td>{esc(original)}</td><td>{esc(original_drive_source)}</td></tr>')
-    if hardware.get("access_interface") is not None:
-        from interface_types import confirmed_interface
-        interface = hardware["access_interface"]
-        if not isinstance(interface, dict) or interface.get("source") not in ("user", "ioreg:target-ancestor"):
-            raise ValueError("Invalid access interface")
-        provenance = text["source_user"] if interface["source"] == "user" else text["source_system"]
-        interface = confirmed_interface(interface.get("name"))
-        hardware_rows.append(f'<tr><th scope="row">{esc(text["protocol"])}</th><td>{esc(interface["name"])}</td><td>{esc(provenance)}</td></tr>')
-    hardware_html = (
-        '<section id="hardware"><h2>'
-        + esc(text["hardware"])
-        + "</h2><table><tbody>"
-        + "".join(hardware_rows)
-        + "</tbody></table>"
-    )
-    hardware_html += "</section>"
     sustained_case = next((c for c in cases if c["name"] == "sustained"), {})
-    automatic = result.get("tool", {}).get("method_version") == "drivespeed-auto-full-v1"
+    automatic = result.get("tool", {}).get("method_version") in AUTO_METHODS
+    mandatory_cache = result.get("tool", {}).get("method_version") == AUTO_METHOD
+    completeness = core_completeness(result) if mandatory_cache else result.get("completeness", {})
     timing = collection_status(sustained_case) if automatic else None
     limited_windows = timing not in (None, "collected")
     assessment = (cache_assessment(sustained_case.get("series", []), sampling_status=timing)
-                  if limited_windows else result.get("cache_assessment") or cache_assessment(sustained_case.get("series", [])))
+                  if limited_windows or mandatory_cache else result.get("cache_assessment") or cache_assessment(sustained_case.get("series", [])))
     cards = []
     for name, direction in [
         ("seq_read", "read"),
@@ -866,7 +930,7 @@ def render_report(result, output, language, text, requested_format="html", compa
             )
         )
     cache_bytes = assessment.get("cache_capacity_estimate_bytes")
-    if cache_bytes is not None or result.get("tool", {}).get("method_version") != "drivespeed-auto-full-v1":
+    if cache_bytes is not None or result.get("tool", {}).get("method_version") not in AUTO_METHODS:
         cards.insert(
             min(2, len(cards)),
             card(
@@ -1127,6 +1191,10 @@ def render_report(result, output, language, text, requested_format="html", compa
     if result.get("error"):
         notes.append(text.get(result["error"].get("key"), text["run_failed"]))
     status = text.get(result.get("outcome"), result.get("outcome", ""))
+    report_title = text["title"]
+    if mandatory_cache and not completeness["complete"]:
+        report_title = text["incomplete_test_title"]
+        status = text["partial"]
     sample = (
         f'<p class="notice">{esc(text["sample"])}</p>'
         if result.get("synthetic")
@@ -1153,40 +1221,49 @@ def render_report(result, output, language, text, requested_format="html", compa
     )
     long_summary_html = f'''<h2 class="group-title">{esc(text["long_group"])}</h2><p class="group-caption">QD {esc(sustained_case.get("qd", "—"))} · {number(sustained_case.get("metrics", {}).get("runtime_ms", 0) / 1000)} s</p>
 {('<dl class="cards long-cards">' + "".join(cards) + '</dl><div class="summary-notes"><p>* ' + esc(text["cache_summary_note"]) + '</p></div>') if cards else '<p class="notice">' + esc(text[cache_label]) + '</p>'}''' if result.get('plan', {}).get('profile') not in ('mapping', 'integrity') else ''
+    if automatic and assessment.get('status') != 'observed_drop_stable':
+        observed_ms = sustained_case.get('metrics', {}).get('runtime_ms')
+        observed_seconds = observed_ms / 1000 if isinstance(observed_ms, (int, float)) else None
+        long_summary_html = '<p class="notice">' + esc(text['write_observation_brief'].format(seconds=number(observed_seconds))) + '</p>'
+        if mandatory_cache:
+            long_summary_html = '<p class="notice" data-required-cache="incomplete">' + esc(text["required_cache_incomplete"]) + '</p>'
     sustained_html = f'''<section id="sustained"><h2>{esc(text["sustained"])}</h2><p class="muted" id="tail-speed-note">{esc(text["tail_explanation"])}</p><div class="sustained-grid"><div>{chart(series, text)}</div><dl>{"".join(lines)}</dl></div>{cache_html}</section>''' if result.get('plan', {}).get('profile') not in ('mapping', 'integrity') else ''
     drive = hardware.get("drive", {})
     display_model = product_profile["display_name"] if product_profile is not None else drive.get("matching_model") or drive.get("model") or text["unknown"]
     object_line = str(display_model)+" · "+text.get("scope_"+str(target.get("scope")),text["unknown"])
-    document_title = str(display_model)+" · "+text["title"] if product_profile is not None else text["title"]
+    document_title = str(display_model)+" · "+report_title if product_profile is not None else report_title
     document = f'''<!doctype html>
 <html lang="{esc(language)}" dir="{direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{esc(document_title)}</title><style>{css}</style></head><body><main>
-<header><div><h1>{esc(text["title"])}</h1><p>{esc(object_line)}</p><p class="run-meta"><time datetime="{esc(created)}">{esc(created_display)}</time><span>{esc(status)} · {len(completed)}/{len(cases)}</span></p></div><button type="button" title="{esc(text["print_hint"])}" onclick="window.print()">{esc(text["download"])}</button></header>
+<header><div><h1>{esc(report_title)}</h1><p>{esc(object_line)}</p><p class="run-meta"><time datetime="{esc(created)}">{esc(created_display)}</time><span>{esc(status)} · {len(completed)}/{len(cases)}</span></p></div><button type="button" title="{esc(text["print_hint"])}" onclick="window.print()">{esc(text["download"])}</button></header>
 {sampling_notice}
 {sample}
-{('<p class="notice">' + esc(text['core_incomplete']) + '</p>') if result.get('completeness', {}).get('complete') is False else ''}
+{('<p class="notice">' + esc(text['core_incomplete']) + '</p>') if completeness.get('complete') is False else ''}
 {('<h2 class="group-title">' + esc(text["short_group"]) + '</h2><p class="group-caption">' + esc(text["short_group_note"]) + '</p><dl class="cards short-cards">' + "".join(short_cards) + '</dl>') if short_cards else ''}
 {long_summary_html}
 {render_diagnostics(result, text)}
-{render_peak_comparison(result, text)}
-{hardware_html}
-{render_hardware_assessment(result, text)}
-{render_product_resources(product_profile, text)}
+{render_capacity_check(result, text)}
 {render_evaluation(result, language)}
+{render_hardware_assessment(result, text, show_computer_model, product_profile)}
+{render_product_resources(product_profile, text)}
 {render_user_input(result, language, text)}
 {community_html}
 {readable_html}
+<details id="technical-appendix" class="technical-appendix"><summary>{esc(text["technical_appendix"])}</summary>
+{render_peak_comparison(result, text)}
 {reference_html}
 {sustained_html}
 <details id="results"><summary>{esc(text["full_results"])}</summary><dl class="metric-guide">{metric_guide}</dl><div class="table-wrap">{table}</div></details>
 <details id="environment"><summary>{esc(text["environment"])}</summary><dl class="metadata">{"".join(metadata)}{environment_html}</dl>{depth_table}</details>
-<div class="report-ending"><details id="method"><summary>{esc(text["method"])}</summary><p>{esc(text["method_text"])}</p><p>{esc(text["window_method"])}</p><p>{esc(text["sensors_limit"])}</p>{cache_method}<div class="table-wrap">{config_table}</div></details>
+<div class="report-ending"><details id="method"><summary>{esc(text["method"])}</summary><p>{esc(text["method_text"])}</p><p>{esc(text["window_method"])}</p><p>{esc(text["sensors_limit"])}</p>{cache_method}<div class="table-wrap">{config_table}</div></details></div></details>
+<p class="print-appendix-note">{esc(text["technical_appendix_note"])}</p>
 <div class="report-closing">{('<aside class="run-notes">' + "".join(f"<p>{esc(n)}</p>" for n in notes) + "</aside>") if notes else ""}
-{agent_usage_html()}
-<footer><div class="footer-content"><div class="project">{project_html}</div>{promotion_html}</div><p class="privacy">{esc(text["privacy"])} {esc(text["raw"])}</p></footer></div></div>
+{agent_usage_html(text=text)}
+<footer><div class="footer-content"><div class="project">{project_html}</div>{promotion_html}</div><p class="privacy">{esc(text["privacy"])} {esc(text["raw"])}</p></footer></div>
 </main><script>
 const collapsedForPrint = [];
 window.addEventListener('beforeprint', () => {{
-  document.querySelectorAll('details:not([open])').forEach(item => {{
+  document.querySelectorAll('details:not([open]):not(.technical-appendix):not(.agent-guidance)').forEach(item => {{
+    if (item.closest('.technical-appendix, .agent-usage')) return;
     collapsedForPrint.push(item);
     item.open = true;
   }});

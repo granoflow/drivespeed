@@ -156,9 +156,10 @@ class HardwareRatingTests(unittest.TestCase):
             self.assertNotIn('4/5',html);self.assertIn('&lt;script&gt;',html);self.assertNotIn('<script>unsafe',html)
             self.assertIn('https://www.asmedia.com.tw/',html)
         source=report.render_hardware_assessment({},messages('zh-CN'))
-        self.assertNotIn('无法评分',source);self.assertIn('测量背景未记录或存在干扰',source)
+        self.assertNotIn('无法评分',source);self.assertIn(messages('zh-CN')['device_no_upgrade'],source)
         self.assertNotIn('class="performance-ratings"',source)
-        self.assertIn('重新测量',source);self.assertIn('不投稿',source)
+        self.assertNotIn(messages('zh-CN')['device_upgrade'],source)
+        self.assertNotIn(messages('zh-CN')['interface_catalog'],source)
 
     def test_windows_model_contains_no_unique_identifiers(self):
         raw=json.dumps({'Manufacturer':'Vendor','Model':'Model','SerialNumber':'SECRET'}).encode()

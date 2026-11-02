@@ -247,9 +247,12 @@ html[dir="rtl"] .cache-reference, html[dir="rtl"] .card .notice { direction: rtl
   #hardware-assessment > table > tbody > tr { display: grid; grid-template-columns: 1fr 1fr; padding: 10px 0; border-bottom: 1px solid #dbe4ee; }
   #hardware-assessment > table > tbody > tr > th { grid-column: 1 / -1; }
   #hardware-assessment > table > tbody > tr > * { border: 0; padding: 5px 8px; text-align: start; }
+  #hardware-assessment .device-parameters > tbody > tr > td { grid-column: 1 / -1; }
   #hardware-assessment .performance-ratings tr > td:last-child { grid-column: 1 / -1; }
 }
 @media print {
+  #hardware-assessment { break-inside: avoid; }
+  #hardware-assessment > h2 { break-after: avoid; }
   #hardware-assessment > p { break-after: avoid; }
 }
 
@@ -261,3 +264,18 @@ html[dir="rtl"] .cache-reference, html[dir="rtl"] .card .notice { direction: rtl
 #product-resources p{font-size:.88rem;margin:4px 0 6px;color:#526579}#product-resources time{white-space:nowrap}
 #product-resources a:focus-visible{outline:2px solid #174e7d;outline-offset:4px}#product-resources a:visited{color:#675184}
 @media print{#product-resources{break-inside:auto}#product-resources h2,#product-resources h3{break-after:avoid}#product-resources li{break-inside:avoid;padding:7px 0}#product-resources a{display:inline;min-height:0}#product-resources a[href]::after{content:" (" attr(href) ")";overflow-wrap:anywhere}}
+
+/* Reader report first; complete trace data remains available in HTML. */
+.technical-appendix > section, .technical-appendix > details,
+.technical-appendix .report-ending > details {
+  border: 0; border-radius: 0; padding-inline: 0; border-block-start: 1px solid #dbe4ee;
+}
+.print-appendix-note { display: none; }
+.data-citation p { font-size: 13px; }
+@media print {
+  .technical-appendix, .agent-usage, .device-rating-evidence { display: none !important; }
+  .print-appendix-note { display: block; font-size: 8pt; color: #526579; }
+  .data-citation { break-inside: avoid; }
+}
+
+@media print { #reading-results { break-inside: avoid; } }

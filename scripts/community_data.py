@@ -1,5 +1,6 @@
 """Public report projection and in-memory transport; no network or cache files."""
 
+from workloads import AUTO_METHOD, AUTO_METHODS
 import hashlib
 import json
 import math
@@ -194,7 +195,7 @@ def validate_payload(payload):
             _fail(f"cases[{index}].cache")
     if not completed:
         raise CommunityError("no_measurements")
-    if payload["tool"]["method_version"] == "drivespeed-auto-full-v1":
+    if payload["tool"]["method_version"] in AUTO_METHODS:
         require_full_report(payload)
     return payload
 
@@ -299,7 +300,7 @@ def require_publication_quality(payload):
 
 
 def require_full_report(payload):
-    automatic = payload["tool"]["method_version"] == "drivespeed-auto-full-v1"
+    automatic = payload["tool"]["method_version"] in AUTO_METHODS
     if automatic and payload.get("quality", {}).get("status") not in ("quiet_observed", "interference_observed", "visibility_limited"):
         _fail("quality")
     if payload["plan"]["profile"] != "full" or payload["outcome"] != "completed":
@@ -323,6 +324,12 @@ def require_full_report(payload):
                 item = case[direction]
                 if item["bytes"] <= 0 or any(item[k] is None or item[k] <= 0 for k in ("mb_s", "iops")) or any(value is None for value in item["latency_us"].values()):
                     _fail("cases." + direction)
+    if payload["tool"]["method_version"] == AUTO_METHOD:
+        cache = next(case for case in cases if case["name"] == "sustained").get("cache")
+        speed = cache.get("post_cache_mb_s") if isinstance(cache, dict) else None
+        if (not cache or cache.get("status") != "observed" or type(speed) not in (int, float)
+                or not math.isfinite(speed) or speed <= 0):
+            _fail("cases.sustained.cache")
     return payload
 
 
@@ -349,9 +356,9 @@ def project_result(result, profile_url, intro="", submission_id=None):
             _fail("hardware.access_interface")
     instant = _timestamp(result.get("created"), "created")
     method = result.get("tool", {}).get("method_version")
-    if method not in ("drivespeed-file-v1", "drivespeed-auto-full-v1"):
+    if method not in ("drivespeed-file-v1", *AUTO_METHODS):
         _fail("tool.method_version", "missing_parameters")
-    automatic = method == "drivespeed-auto-full-v1"
+    automatic = method in AUTO_METHODS
     if automatic:
         from workloads import core_completeness, collection_status
         try:
@@ -405,7 +412,11 @@ def project_result(result, profile_url, intro="", submission_id=None):
             depth = [{"depth": int(k), "percent": _number(v, field + ".achieved_depth")} for k, v in sorted(raw_depth.items(), key=lambda item: int(item[0]))]
         cache = None
         if local.get("cache_test") or local.get('name') == 'sustained' and 'links' in result.get('hardware', {}):
-            assessed = result.get("cache_assessment", {})
+            if method == AUTO_METHOD:
+                from workloads import cache_assessment
+                assessed = cache_assessment(local.get("series", []), sampling_status=collection_status(local))
+            else:
+                assessed = result.get("cache_assessment", {})
             if not isinstance(assessed, dict):
                 _fail("cache_assessment")
             timing_ok = not automatic or collection_status(local) == "collected"

@@ -22,7 +22,37 @@ def target_ancestors(registry, physical_devices):
     return found[0] if len(found) == 1 else None
 
 
-def mac_access_facts(registry, physical_devices):
+
+def tunnel_profiler_bridge(ancestors, profile):
+    """Join a target's PCIe tunnel to one profiler switch; GUIDs never leave memory."""
+    guids = {int.from_bytes(node['Tunnel Endpoint GUID'], 'little') for node in ancestors
+             if isinstance(node.get('Tunnel Endpoint GUID'), bytes) and len(node['Tunnel Endpoint GUID']) == 8}
+    if not guids or profile is None:
+        return None
+    matches, stack, visited = [], [profile.get('SPThunderboltDataType', [])], 0
+    while stack:
+        node = stack.pop()
+        visited += 1
+        if visited > 100_000:
+            return None
+        if isinstance(node, list):
+            stack.extend(node)
+            continue
+        if not isinstance(node, dict):
+            continue
+        uid = node.get('switch_uid_key')
+        if (isinstance(uid, str) and re.fullmatch(r'0x[0-9a-fA-F]{16}', uid)
+                and int(uid, 16) in guids and str(node.get('vendor_name_key', '')).casefold() == 'asmedia'
+                and str(node.get('device_name_key', '')).casefold() == '246x' and node.get('mode_key') == 'usb_four'):
+            matches.append(node)
+        stack.extend(value for value in node.values() if isinstance(value, (dict, list)))
+    if len(matches) != 1:
+        return None
+    port = matches[0].get('receptacle_upstream_ambiguous_tag', {})
+    speed = port.get('current_speed_key') if isinstance(port, dict) and port.get('receptacle_status_key') == 'receptacle_connected' else None
+    return {'label': 'ASMedia 246x', 'family': 'usb4', 'speed': speed}
+
+def mac_access_facts(registry, physical_devices, profile=None):
     """Names alone, unrelated nodes and host port capability cannot bind a drive."""
     ancestors = target_ancestors(registry, physical_devices)
     if ancestors is None:
@@ -39,6 +69,13 @@ def mac_access_facts(registry, physical_devices):
         # Exact variants remain handled by the existing target-label catalog.
         if family and series:
             bridges.append((node, family, label))
+    source = 'ioreg:target-ancestor'
+    if not bridges:
+        bridge = tunnel_profiler_bridge(ancestors, profile)
+        if bridge is None:
+            return {}
+        bridges.append(({'Link Speed': bridge['speed']}, bridge['family'], bridge['label']))
+        source = 'ioreg:target-ancestor'  # Preserve the existing public provenance enum.
     if len(bridges) != 1:
         return {}
     node, family, label = bridges[0]
@@ -48,8 +85,8 @@ def mac_access_facts(registry, physical_devices):
     gbps = float(match[1]) if match and float(match[1]) in (10, 20, 40, 80) else None
     name = 'USB4' if family == 'usb4' else 'Thunderbolt'
     return {'controller': {'model': 'ASMedia 246x', 'reported_name': label,
-                           'precision': 'series', 'source': 'ioreg:target-ancestor'},
+                           'precision': 'series', 'source': source},
             'access_interface': {'name': name + (f' {gbps:g} Gbps' if gbps else ''),
-                                 'source': 'ioreg:target-ancestor'},
+                                 'source': source},
             'link': {'kind': 'usb' if family == 'usb4' else 'thunderbolt',
-                     'state': 'reported', 'source': 'ioreg:target-ancestor', 'gbps': gbps}}
+                     'state': 'reported', 'source': source, 'gbps': gbps}}

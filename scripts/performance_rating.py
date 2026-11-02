@@ -1,4 +1,5 @@
 """Evidence-bound throughput ratings; no authenticity or health classification."""
+from workloads import AUTO_METHODS
 import json
 import math
 from datetime import date
@@ -92,7 +93,7 @@ def performance_ratings(result, today=None):
         if not positive(value):
             continue
         row['measured'] = value
-        if result.get('tool', {}).get('method_version') == 'drivespeed-auto-full-v1' and result.get('measurement_quality', {}).get('status') != 'quiet_observed':
+        if result.get('tool', {}).get('method_version') in AUTO_METHODS and result.get('measurement_quality', {}).get('status') != 'quiet_observed':
             row['reason'] = 'measurement_quality'
             continue
         context = comparison_context(result, case)
@@ -214,3 +215,61 @@ def component_summary(result):
         summary['status'] = 'measurement_quality'
         summary['bottleneck'] = None
     return summary
+
+
+def upgrade_parameters(result, summary):
+    """Suggest compatible capacity targets only for a supported, isolated constraint."""
+    from reference_data import validate_reference_data, connection_limits
+    if (summary['status'] != 'bottleneck' or result.get('target', {}).get('scope') != 'physical'
+            or result.get('measurement_quality', {}).get('status') != 'quiet_observed'):
+        return None
+    hardware = result.get('hardware', {})
+    links = hardware.get('links', [])
+    if not links or any(link.get('state') != 'negotiated' or not link_reference(link) for link in links):
+        return None
+    refs = validate_reference_data(result.get('references') or {'items': []})
+    try:
+        if not 0 <= (date.today() - date.fromisoformat(refs.get('checked_at', ''))).days <= 30:
+            return None
+    except (ValueError, TypeError):
+        return None
+    limits = connection_limits(result, refs)
+    external = any(link['kind'] == 'usb' for link in links)
+    needed = ('computer', 'enclosure', 'controller', 'drive') if external else ('drive',)
+    if not limits or any(not part['model'] or not part['sources'] or
+                         any(not positive(part[direction + '_mb_s']) for direction in ('read', 'write'))
+                         for part in limits['parts'] if part['component'] in needed):
+        return None
+    component = summary['bottleneck']
+    current = next(row for row in summary['rows'] if row['component'] == component)
+    others = [row for row in summary['rows'] if row['component'] != component]
+    targets = {}
+    for direction in ('read', 'write'):
+        bounds = [entry['bound'] for row in others for entry in row['directions'] if entry['direction'] == direction]
+        existing = [entry['bound'] for entry in current['directions'] if entry['direction'] == direction]
+        if len(bounds) != 2 or len(existing) != 1 or min(bounds) <= existing[0]:
+            return None  # Tied or opposing constraints do not justify replacing one component.
+        targets[direction + '_mb_s'] = min(bounds)
+    advice = dict(component=component, **targets)
+    if component != 'interface':
+        return advice
+    weakest = min(links, key=lambda link: link_reference(link)['mb_s'])
+    if any(link is not weakest and link_reference(link)['mb_s'] < max(targets.values()) for link in links):
+        return None  # Replacing one segment cannot remove another remaining path constraint.
+    if weakest['kind'] == 'pcie':
+        maximum = link_reference(dict(kind='pcie', gt_s=weakest.get('max_gt_s'), lanes=weakest.get('max_lanes')))
+        supported = maximum['mb_s'] if maximum else 0
+    else:
+        supported = min(part[direction + '_mb_s'] for part in limits['parts']
+                        if part['component'] in ('computer', 'enclosure') for direction in ('read', 'write'))
+    candidates = []
+    for item in interface_catalog()['items']:
+        if item['kind'] != weakest['kind']:
+            continue
+        candidate = link_reference(dict(item, lanes=weakest.get('max_lanes', weakest.get('lanes'))))
+        if candidate and max(targets.values()) <= candidate['mb_s'] <= supported:
+            candidates.append(candidate)
+    if not candidates:
+        return None
+    advice['interface'] = min(candidates, key=lambda candidate: candidate['mb_s'])
+    return advice

@@ -199,14 +199,15 @@ def collect_hardware(
                 ],
                 timeout=45,
             )
-            hardware = mac_hardware(json.loads(output), target["physical_devices"])
+            profile = json.loads(output)
+            hardware = mac_hardware(profile, target["physical_devices"])
             # A whole-machine Thunderbolt candidate never proves this target's path.
             # Collect only in memory and project only target-ancestor facts.
             try:
                 from mac_ancestry import mac_access_facts
                 raw = subprocess.check_output(['ioreg', '-a', '-l', '-p', 'IOService'], timeout=20)
                 if len(raw) <= 16_777_216:
-                    access = mac_access_facts(plistlib.loads(raw), target['physical_devices'])
+                    access = mac_access_facts(plistlib.loads(raw), target['physical_devices'], profile)
                     if access:
                         if not hardware['controller'].get('model'):
                             hardware['controller'].update(access['controller'])

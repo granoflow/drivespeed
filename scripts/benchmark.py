@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run bounded file-based fio tests. Standard library only, Python 3.10+."""
 
+from workloads import AUTO_METHODS
 import argparse
 import json
 import os
@@ -112,16 +113,22 @@ def parser():
         action="store_true",
         help="Inspect only: no installation, network, test files or output writes",
     )
+    p.add_argument("--capacity-from", help="Optional capacity/read-back check after this completed speed result; preview and explicit write confirmation required")
     return p
 
 
 def confirm_write(target, config, allowance, text=None):
     digest = plan_hash(target, config, allowance)
+    if config.get("method_version") == "drivespeed-capacity-v1":
+        print((text or messages("en"))["capacity_warning"], file=sys.stderr)
     print(json.dumps(dict(target=target["path"], physical_devices=target["physical_devices"],
                           file_bytes=config["file_bytes"], max_write_bytes=config["max_write_bytes"],
                           reserve_bytes=config["reserve_bytes"], max_runtime_seconds=config["max_runtime_seconds"],
                           remaining_authorized_bytes=allowance["remaining"] if allowance["present"] else None,
-                          new_finite_allowance=not allowance["present"], plan_sha256=digest)), file=sys.stderr)
+                          new_finite_allowance=not allowance["present"],
+                          additional_authorized_bytes=config.get("additional_authorized_bytes", 0),
+                          capacity_run_cap_bytes=config.get("capacity_run_cap_bytes"),
+                          plan_sha256=digest)), file=sys.stderr)
     if sys.stdin.isatty():
         answer = input((text or messages("en"))["confirm_write"])
         confirmed = answer == "RUN"
@@ -256,7 +263,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                                     )
                                 )
                             last_elapsed, last_write_bytes = observed_seconds, written
-                        timing = collection_status(dict(rw="write", metrics=observed, series=cache_points)) if config.get("method_version") == "drivespeed-auto-full-v1" else None
+                        timing = collection_status(dict(rw="write", metrics=observed, series=cache_points)) if config.get("method_version") in AUTO_METHODS else None
                         assessment = cache_assessment(cache_points, sampling_status=timing)
                         if (
                             assessment["status"] == "observed_drop_stable"
@@ -326,7 +333,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                 raise ValueError(
                     "Incomplete diagnostic coverage; refusing to claim a complete write/read verification"
                 )
-            tolerance = 0 if config.get("method_version") == "drivespeed-auto-full-v1" else job["bs"] * job["qd"]
+            tolerance = 0 if config.get("method_version") in (*AUTO_METHODS, "drivespeed-capacity-v1") else job["bs"] * job["qd"]
             if completed > job["io_bytes"] + tolerance:
                 raise ValueError("Reported I/O exceeds the planned bound")
             case["status"] = "completed"
@@ -360,10 +367,10 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             case["metrics_complete"] = case["status"] == "completed"
             for path in output.glob(f"{job['name']}_bw.*.log"):
                 try:
-                    case["series"].extend(bandwidth_series(path, strict=config.get("method_version") == "drivespeed-auto-full-v1"))
+                    case["series"].extend(bandwidth_series(path, strict=config.get("method_version") in AUTO_METHODS))
                 except (OSError, ValueError) as exc:
                     case["collection_error"] = str(exc)
-            if config.get("method_version") == "drivespeed-auto-full-v1":
+            if config.get("method_version") in AUTO_METHODS:
                 case["collection_status"] = collection_status(case)
                 missing = case_core_missing(case, job, config)
                 if missing and case["status"] == "completed":
@@ -380,7 +387,12 @@ def execute(args, text, report_text):
     target = target_info(args.target)
     ledger = WriteAllowance()
     allowance = ledger.read(target)
-    config = auto_plan(target["total_bytes"], target["free_bytes"], allowance["run_cap"], allowance["remaining"])
+    capacity_source = None
+    if args.capacity_from:
+        from capacity_check import load_source, capacity_plan
+        capacity_source = load_source(args.capacity_from, target)
+    config = (capacity_plan(target, allowance, capacity_source) if capacity_source is not None else
+              auto_plan(target["total_bytes"], target["free_bytes"], allowance["run_cap"], allowance["remaining"]))
 
     current_hardware = collect_hardware(
         target,
@@ -449,7 +461,7 @@ def execute(args, text, report_text):
             os_version=platform.mac_ver()[0] if platform.system() == "Darwin" else platform.release()
         ),
         plan=config,
-        tool=dict(version="unknown", method_version="drivespeed-auto-full-v1"),
+        tool=dict(version="unknown", method_version=config["method_version"]),
         cases=[],
         series=[],
         outcome="failed",
@@ -494,7 +506,8 @@ def execute(args, text, report_text):
             result["measurement_quality"] = observe_quality(target)
             fresh = check_target(target, config["reserve_bytes"])
             target.update(fresh)
-            config = auto_plan(fresh["total_bytes"], fresh["free_bytes"], allowance["run_cap"], allowance["remaining"])
+            config = (capacity_plan(target, allowance, capacity_source) if capacity_source is not None else
+                      auto_plan(fresh["total_bytes"], fresh["free_bytes"], allowance["run_cap"], allowance["remaining"]))
             result["plan"] = config
             confirmed = confirm_write(target, config, allowance, text)
             ledger.reserve(target, config, allowance, run_id, confirmed)
@@ -607,13 +620,17 @@ def execute(args, text, report_text):
             )
             if any(c.get("collection_status") == "collected_irregular" for c in result["cases"]):
                 result["notes"].append("sampling_irregular")
-            timing = collection_status(sustained) if config.get("method_version") == "drivespeed-auto-full-v1" else None
+            timing = collection_status(sustained) if config.get("method_version") in AUTO_METHODS else None
             result["sustained_summary"] = sustained_summary(sustained.get("series", []), sampling_status=timing)
             result["cache_assessment"] = cache_assessment(sustained.get("series", []), sampling_status=timing)
             result["cache_assessment"]["stop_reason"] = sustained.get(
                 "stop_reason", "bounded_test"
             )
-            result["completeness"] = core_completeness(result)
+            if capacity_source is not None:
+                from capacity_check import completeness
+                result["completeness"] = completeness(result)
+            else:
+                result["completeness"] = core_completeness(result)
             if not result["completeness"]["complete"]:
                 if result["outcome"] == "complete":
                     result["outcome"] = "partial"
@@ -625,6 +642,16 @@ def execute(args, text, report_text):
 
     progress.emit("report", force=True)
     paths = render_report(result, output, args.language, report_text, args.format)
+    if capacity_source is not None:
+        import copy
+        combined = copy.deepcopy(capacity_source)
+        combined.pop("_source_sha256", None)
+        combined["capacity_check"] = {key: result[key] for key in
+                                      ("run_id", "created", "tool", "plan", "cases", "outcome", "completeness")}
+        combined["capacity_check"]["speed_source_sha256"] = config["source_sha256"]
+        save(output / "combined-results.json", combined)
+        result["capacity_report"] = paths
+        paths = render_report(combined, output / "combined-report", args.language, report_text, args.format)
     result["report"] = paths
     save(output / "results.json", result)
     progress.emit(

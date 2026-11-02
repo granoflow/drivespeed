@@ -4,6 +4,9 @@ import json
 import math
 import statistics
 
+AUTO_METHOD = "drivespeed-auto-full-v2"
+AUTO_METHODS = ("drivespeed-auto-full-v1", AUTO_METHOD)
+
 GIB = 1_073_741_824
 MIB = 1_048_576
 PROFILES = {
@@ -231,7 +234,7 @@ def auto_plan(total_bytes, free_bytes, run_cap, remaining_cap):
             raise ValueError("Capacity and authorized byte limits must be uint64 integers")
     if not total_bytes or free_bytes > total_bytes:
         raise ValueError("Invalid target capacity")
-    budget = min(64 * GIB, run_cap, remaining_cap)
+    budget = min(run_cap, remaining_cap)
     reserve = max(10 * GIB, (total_bytes + 9) // 10)
     available = max(0, free_bytes - reserve - 64 * MIB)
     size = min(8 * GIB, (4 * available) // 5, budget // 4) // MIB * MIB
@@ -250,7 +253,7 @@ def auto_plan(total_bytes, free_bytes, run_cap, remaining_cap):
     first.update(io_bytes=sustained, cache_test=True, initialize_bytes=size)
     jobs = [first] + [job for job in jobs if job is not first]
     config.update(
-        profile="full", method_version="drivespeed-auto-full-v1", jobs=jobs,
+        profile="full", method_version=AUTO_METHOD, jobs=jobs,
         reserve_bytes=reserve, metadata_headroom_bytes=64 * MIB,
         max_write_bytes=sustained + 5 * ordinary,
         max_runtime_seconds=sum(job["runtime"] + 45 for job in jobs),
@@ -331,10 +334,10 @@ def fio_arguments(fio, job, file_bytes, engine, raw, log):
         "--end_fsync=1",
         "--group_reporting=1",
         "--output-format=json",
-        "--status-interval=1",
+        f"--status-interval={job.get('status_interval', 1)}",
         f"--output={raw}",
         f"--write_bw_log={log}",
-        "--log_avg_msec=1000",
+        f"--log_avg_msec={job.get('status_interval', 1) * 1000}",
         "--log_unix_epoch=0",
         "--log_offset=0",
         "--eta=never",
@@ -583,10 +586,16 @@ def case_core_missing(case, job, config):
             written = 0
         if written < config.get("file_bytes", 0):
             missing.append("sustained.initialization")
+        if config.get("method_version") == AUTO_METHOD:
+            assessed = cache_assessment(case.get("series", []), sampling_status=collection_status(case))
+            speed = assessed.get("post_cache_mb_s")
+            if (collection_status(case) != "collected" or assessed["status"] != "observed_drop_stable"
+                    or type(speed) not in (int, float) or not math.isfinite(speed) or speed <= 0):
+                missing.append("sustained.post_cache_stability")
         if written < job["io_bytes"] and not (
             case.get("stop_reason") == "post_drop_stable"
             and cache_assessment(case.get("series", []), sampling_status=collection_status(case)
-                                 if config.get("method_version") == "drivespeed-auto-full-v1" else None)["status"] == "observed_drop_stable"
+                                 if config.get("method_version") in AUTO_METHODS else None)["status"] == "observed_drop_stable"
         ):
             missing.append("sustained.endpoint")
     transferred = sum(data.get(d, {}).get("bytes", 0) for d in ("read", "write")
@@ -603,6 +612,9 @@ def core_completeness(result):
     config = result.get("plan", {})
     expected = {j["name"]: j for j in config.get("jobs", [])}
     missing, seen = [], set()
+    if (result.get("tool", {}).get("method_version") == AUTO_METHOD
+            and config.get("method_version") != AUTO_METHOD):
+        missing.append("plan.method_version")
     if len(expected) != 11:
         missing.append("plan.jobs")
     for case in result.get("cases", []):

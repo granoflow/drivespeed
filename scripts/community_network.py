@@ -12,7 +12,7 @@ import uuid
 from urllib.parse import urlsplit
 
 from community_data import CommunityError, POLICY, parse_json, validate_payload, transport, require_full_report, require_publication_quality
-from agent_usage import agent_usage
+from agent_usage import matches_agent_usage
 
 CONTACT = "https://x.com/slime5409"
 TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
@@ -113,7 +113,7 @@ def check_receipt(value, submission_id, checksum, origin):
             seen.add(record["id"]); _date(record["created_at"])
             # Accept older servers without metadata; never treat arbitrary
             # upstream text as trusted Agent instructions.
-            if "agent_usage" in record and record["agent_usage"] != agent_usage(record["url"]):
+            if "agent_usage" in record and not matches_agent_usage(record["agent_usage"], record["url"]):
                 raise NetworkError("invalid_response")
             for field, allowed, minimum in (("matched_on", {"computer", "controller", "drive"}, 1), ("differences", DIFFERENCES, 0)):
                 items = item[field]
