@@ -188,27 +188,38 @@ class WriteAllowance:
         amount = _bytes(config["max_write_bytes"])
         if amount <= 0 or digest != plan_hash(target, config, expected):
             raise BenchError("unsafe_target", "Write plan changed after confirmation")
+        if "normal_run_cap_bytes" in config and config.get("method_version") != "drivespeed-auto-full-v2":
+            raise BenchError("unsafe_target", "Normal authorization proposal has the wrong method")
         with self._connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT scope_id,cap,charged,revision,run_cap FROM scopes WHERE active=1").fetchone()
             if row is None:
                 if expected["present"] or expected["revision"] != 0 or db.execute("SELECT COUNT(*) FROM scopes").fetchone()[0]:
                     raise BenchError("unsafe_target", "Write authorization changed")
-                row = (str(uuid.uuid4()), config["write_budget"], 0, 0, config["write_budget"])
+                row = (str(uuid.uuid4()), expected["remaining"], 0, 0, expected["run_cap"])
                 db.execute("INSERT INTO scopes VALUES(?,?,?,?,?,?,1)", (*row, "confirmed automatic plan"))
             scope_id, cap, charged, revision, run_cap = row
             actual = dict(present=expected["present"], scope_id=scope_id if expected["present"] else None,
                           revision=revision, run_cap=run_cap, remaining=cap - charged)
             if actual != expected:
                 raise BenchError("unsafe_target", "Write authorization changed or exhausted")
-            if config.get("method_version") == "drivespeed-capacity-v1":
-                # This exact finite extension is part of the explicitly confirmed
-                # capacity plan. Keep the scope and all historical charges intact.
+            if not expected["present"]:
+                # The absent-state default is a planning hint, not a grant.
+                # Only the amount in this confirmed plan becomes authorized.
+                cap = run_cap = amount
+                db.execute("UPDATE scopes SET cap=?,run_cap=? WHERE scope_id=?", (cap, run_cap, scope_id))
+            proposal_field = ("capacity_run_cap_bytes" if config.get("method_version") == "drivespeed-capacity-v1"
+                              else "normal_run_cap_bytes" if config.get("method_version") == "drivespeed-auto-full-v2"
+                              and "normal_run_cap_bytes" in config else None)
+            if proposal_field is not None:
+                # This exact finite extension is part of the confirmed plan.
+                # Keep the scope and all historical charges intact.
                 extra = _bytes(config.get("additional_authorized_bytes"))
-                new_run_cap = _bytes(config.get("capacity_run_cap_bytes"))
-                if (not expected["present"] or extra != max(0, amount - (cap - charged))
+                new_run_cap = _bytes(config.get(proposal_field))
+                if ((proposal_field == "capacity_run_cap_bytes" and not expected["present"])
+                        or extra != max(0, amount - (cap - charged))
                         or new_run_cap != max(run_cap, amount)):
-                    raise BenchError("unsafe_target", "Invalid capacity authorization proposal")
+                    raise BenchError("unsafe_target", "Invalid finite authorization proposal")
                 cap = _bytes(cap + extra)
                 run_cap = new_run_cap
                 db.execute("UPDATE scopes SET cap=?,run_cap=? WHERE scope_id=?", (cap, run_cap, scope_id))

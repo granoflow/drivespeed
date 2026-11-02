@@ -66,6 +66,8 @@ def parser():
         default="diskbench-results",
         help="New output directory, preferably on another volume",
     )
+    p.add_argument("--propose-write-bytes", type=int,
+                   help="Propose an exact finite normal-test write plan; does not authorize writes without plan confirmation")
     p.add_argument(
         "--language",
         default=language_default(),
@@ -382,7 +384,20 @@ def run_case(fio, job, config, engine, output, work, target, progress):
     return case
 
 
+def normal_plan(target, allowance, proposed_bytes=None):
+    if proposed_bytes is None:
+        return auto_plan(target["total_bytes"], target["free_bytes"], allowance["run_cap"], allowance["remaining"])
+    if type(proposed_bytes) is not int or not 0 < proposed_bytes <= 2**63 - 1:
+        raise ValueError("Invalid finite write proposal")
+    config = auto_plan(target["total_bytes"], target["free_bytes"], proposed_bytes, proposed_bytes)
+    config.update(additional_authorized_bytes=max(0, config["max_write_bytes"] - allowance["remaining"]) if allowance["present"] else 0,
+                  normal_run_cap_bytes=max(allowance["run_cap"], config["max_write_bytes"]) if allowance["present"] else config["max_write_bytes"])
+    return config
+
+
 def execute(args, text, report_text):
+    if args.capacity_from and args.propose_write_bytes is not None:
+        raise ValueError("Capacity checks use their own exact authorization proposal")
     reference_data = (
         load_reference_data(args.reference_file) if args.reference_file else {}
     )
@@ -394,7 +409,7 @@ def execute(args, text, report_text):
         from capacity_check import load_source, capacity_plan
         capacity_source = load_source(args.capacity_from, target)
     config = (capacity_plan(target, allowance, capacity_source) if capacity_source is not None else
-              auto_plan(target["total_bytes"], target["free_bytes"], allowance["run_cap"], allowance["remaining"]))
+              normal_plan(target, allowance, args.propose_write_bytes))
 
     current_hardware = collect_hardware(
         target,
@@ -511,7 +526,7 @@ def execute(args, text, report_text):
             fresh = check_target(target, config["reserve_bytes"])
             target.update(fresh)
             config = (capacity_plan(target, allowance, capacity_source) if capacity_source is not None else
-                      auto_plan(fresh["total_bytes"], fresh["free_bytes"], allowance["run_cap"], allowance["remaining"]))
+                      normal_plan(target, allowance, args.propose_write_bytes))
             result["plan"] = config
             confirmed = confirm_write(target, config, allowance, text)
             ledger.reserve(target, config, allowance, run_id, confirmed)
