@@ -6,6 +6,8 @@ import statistics
 
 AUTO_METHOD = "drivespeed-auto-full-v2"
 AUTO_METHODS = ("drivespeed-auto-full-v1", AUTO_METHOD)
+QUICK_METHOD = "drivespeed-quick-v2"
+QUICK_METHODS = ("drivespeed-quick-v1", QUICK_METHOD)
 
 GIB = 1_073_741_824
 MIB = 1_048_576
@@ -259,6 +261,24 @@ def auto_plan(total_bytes, free_bytes, run_cap, remaining_cap):
         max_runtime_seconds=sum(job["runtime"] + 45 for job in jobs),
     )
     return config
+
+
+def quick_plan(target):
+    """Initialize once, then measure bounded QD1 sequential and 4 KiB random I/O."""
+    reserve = max(10 * GIB, (target["total_bytes"] + 9) // 10)
+    size = GIB
+    if target["free_bytes"] < reserve + size + 64*MIB:
+        raise ValueError("Insufficient space for a quick measurement")
+    jobs = [dict(name="seq_write", rw="write", bs=MIB, qd=1, io_bytes=size,
+                 runtime=30, require_complete=True),
+            dict(name="seq_read", rw="read", bs=MIB, qd=1, io_bytes=size,
+                 runtime=30, require_complete=True),
+            dict(name="rand_read", rw="randread", bs=4096, qd=1, io_bytes=16*MIB, runtime=5),
+            dict(name="rand_write", rw="randwrite", bs=4096, qd=1, io_bytes=16*MIB, runtime=5)]
+    return dict(profile="quick", method_version=QUICK_METHOD, file_bytes=size,
+                write_budget=size+16*MIB, max_write_bytes=size+16*MIB, reserve_bytes=reserve,
+                metadata_headroom_bytes=64*MIB, max_runtime_seconds=90,
+                total_timeout_seconds=90, jobs=jobs)
 
 
 def diagnostic_plan(profile, target, file_bytes=None, write_budget=None, seconds=30,
@@ -602,7 +622,7 @@ def case_core_missing(case, job, config):
                       if type(data.get(d, {}).get("bytes", 0)) is int)
     if transferred > job["io_bytes"]:
         missing.append(f"{name}.io_bound")
-    if name != "sustained" and transferred < job["io_bytes"] and active_runtime_ms(data, job["rw"]) < job["runtime"] * 1000:
+    if name != "sustained" and transferred < job["io_bytes"] and ((job.get("require_complete") and config.get("method_version") == QUICK_METHOD) or active_runtime_ms(data, job["rw"]) < job["runtime"] * 1000):
         missing.append(f"{name}.endpoint")
     return missing
 
@@ -612,10 +632,16 @@ def core_completeness(result):
     config = result.get("plan", {})
     expected = {j["name"]: j for j in config.get("jobs", [])}
     missing, seen = [], set()
-    if (result.get("tool", {}).get("method_version") == AUTO_METHOD
-            and config.get("method_version") != AUTO_METHOD):
+    if (result.get("tool", {}).get("method_version") in (AUTO_METHOD, *QUICK_METHODS)
+            and config.get("method_version") != result["tool"]["method_version"]):
         missing.append("plan.method_version")
-    if len(expected) != 11:
+    quick = config.get("method_version") in QUICK_METHODS
+    quick_jobs = {"seq_write", "seq_read"}
+    if config.get("method_version") == QUICK_METHOD:
+        quick_jobs |= {"rand_read", "rand_write"}
+    if quick and (set(expected) != quick_jobs or config.get("profile") != "quick"):
+        missing.append("plan.jobs")
+    if not quick and len(expected) != 11:
         missing.append("plan.jobs")
     for case in result.get("cases", []):
         name = case.get("name")
@@ -736,6 +762,11 @@ def cache_assessment(points, sampling_status=None):
     if sampling_status not in (None, "collected"):
         if sampling_status != "short_window":
             out["status"] = "sampling_gaps"
+        # Resolution qualification and curve shape answer different questions.
+        # Retain only the diagnostic status: never promote its cache numbers or
+        # use it to authorize early termination / a complete result.
+        if sampling_status == "collected_irregular":
+            out["curve_diagnostic"] = cache_assessment(points)["status"]
         return out
     samples = sorted(
         (p for p in points if p.get("direction") == "write"), key=lambda p: p["seconds"]

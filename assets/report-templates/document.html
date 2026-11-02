@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="${language}" dir="${direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${document_title}</title><style>${css}</style></head><body><main>
+<header><div><h1>${report_title}</h1><p>${object_line}</p><p class="run-meta"><time datetime="${created}">${created_display}</time><span>${status_line}</span></p></div><button type="button" title="${print_hint}" onclick="window.print()">${download}</button></header>
+${reading_navigation}
+${device_health}
+${sampling_notice}
+${sample}
+${quick_notice}
+${completeness_notice}
+${short_summary}
+${long_summary}
+${quick_history}
+${further_testing}
+${diagnostics}
+${capacity_check}
+${evaluation}
+${hardware_assessment}
+${product_resources}
+${user_input}
+${community}
+${readable_results}
+${online_reviews}
+<details id="technical-appendix" class="technical-appendix"><summary>${technical_appendix}</summary>
+${peak_comparison}
+${references}
+${sustained}
+<details id="results"><summary>${full_results}</summary><dl class="metric-guide">${metric_guide}</dl><div class="table-wrap">${results_table}</div></details>
+<details id="environment"><summary>${environment}</summary><dl class="metadata">${metadata}${environment_html}</dl>${depth_table}</details>
+<div class="report-ending"><details id="method"><summary>${method}</summary><p>${method_text}</p>${window_method}${sensors_limit}${cache_method}<div class="table-wrap">${configuration_table}</div></details></div></details>
+<p class="print-appendix-note">${technical_appendix_note}</p>
+<div class="report-closing">${run_notes}
+${agent_usage}
+<footer><div class="footer-content"><div class="project">${project}</div>${promotion}</div><p class="privacy">${privacy} ${raw_notice}</p></footer></div>
+</main><script>
+const collapsedForPrint = [];
+window.addEventListener('beforeprint', () => {
+  document.querySelectorAll('details:not([open]):not(.technical-appendix)').forEach(item => {
+    if (item.closest('.technical-appendix')) return;
+    collapsedForPrint.push(item);
+    item.open = true;
+  });
+});
+window.addEventListener('afterprint', () => {
+  collapsedForPrint.splice(0).forEach(item => { item.open = false; });
+});
+</script></body></html>

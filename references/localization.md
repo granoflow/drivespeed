@@ -18,8 +18,14 @@
 
 英文 `skill_intro`：Find out how your drive performs. Test it with DriveSpeed.
 
-其他语言的 `skill_intro` 直接根据中文原意重新描述，以自然口语询问硬盘的实际表现并邀请测速，不经英文中转，不照字面翻译“几斤几两”，不加入速度、健康、耗时或安全保证。进度和技术说明照常完整翻译。
+Skill报告以中英文范本为依据；其他语言统一以英文为语义依据，按用户当地语法及本人习惯重新描述。中文和英文也自然改写，不机械照抄。`skill_intro` 保留实测邀请的含义，不加入速度、健康、耗时或安全保证。进度和技术说明照常完整翻译。
 
 报告结尾的官网标签 `website_label` 与扩展推广语 `translation_promo` 必须随用户报告语言翻译。中文原文为“chrome翻译扩展，翻译你的pdf，免费，私密，快速。”；其他语言保留免费、私密、快速及翻译 PDF 的含义，不增加承诺。`https://anz.tv`、`https://translate.anz.tv` 两个网址不翻译；通过项目配置维护。
 
 社区提示另用 `assets/community/locales/en.json`；横评报告另用 `assets/community/report-locales/en.json`，均须完整翻译且保留占位符。它们是软件语言模板，可保存为 JSON；不包含用户投稿或评价缓存。
+
+## 报告范本与网页资源边界
+
+Skill只维护 `assets/report-templates/en.json`、`zh.json` 两份分析范本及一份共享 `document.html`。它们不是语言限制：所有报告语言的措辞均可经完整临时messages包和evaluation输入调整。网页端独立预翻译translate项目实际语言清单的固定文案，不把网页77语言包复制进Skill，也不临时翻译访问中的网页。原内置ar等软件兼容资源保留；自然表达规则同样适用于用户选择这些语言时。
+
+新增SMART/评测区块的固定标签在report-templates/en.json和zh.json的evidence维护。en与zh-CN直接使用对应标签；其他语言在evaluation.evidence.labels提供与英文evidence结构/全部键一致的本地化文本，renderer按同一输入转义渲染，缺项拒绝。标签、正文及可选内容块都要按用户语言自然表达；不将网页77个预翻译包复制进Skill。英文评价输入模板为evaluation.en.json，中文为evaluation.zh.json。

@@ -4,7 +4,11 @@
 
 仅重生成已有报告时，按[报告交付](reporting.md)复用或翻译已保存的评价/来源；不自动采集当前硬件或联网，不用新事实覆盖历史。缺少评价则基于保存证据写有限结论，说明未更新外部资料。
 
-先读本次measurement_quality及completeness。非quiet、观察可见性不足或历史未记录背景时，三项仍逐一回答，但只能描述该主机路径的实测、可能影响与下一项验证，不作设备纯净星级、确定瓶颈/均衡或质量真伪归因。两个启动前quiet窗口也不是全程无干扰证明。核心partial不冒完整；缓存物理边界未观察到则给有限预算/窗口下的具体结论，不填缓存外数字。
+先读本次原方法完整性；历史背景证据和本次实际观察仅用于自然语言对话，不写新报告、导出JSON或投稿JSON，也不阻断投稿。非quiet、观察可见性不足或历史未记录背景时，三项仍逐一回答，但只能描述该主机路径的实测、可能影响与下一项验证，不作设备纯净星级、确定瓶颈/均衡或质量真伪归因。启动前空闲观察不是全程无干扰证明，后来空闲30秒不能回填旧run。核心partial不冒完整；缓存物理边界未观察到则给有限预算/窗口下的具体结论，不填缓存外数字。
+
+## 交付前检查
+
+交付对话先回答本次主要受什么条件约束；缓存未测得时，在对话解释真实曲线、采样资格、固定工作集复写与连接可观测性，并给补测方案；单个采样抖动不是全部原因。报告仅显示supported的实测与结论，不印缺测或不确定提示。厂商有缓存不等于实物配置已验证，未见降速不等于无缓存。依据与推断须分开，不把参考速度填入实测。
 
 ## 必答三项
 
@@ -22,10 +26,12 @@
 {
   "run_id": "从本次 results.json 读取",
   "language": "zh-CN",
+  "report_policy": "verified_only",
+  "followup": [],
   "sections": [
-    {"kind": "bottleneck", "title": "瓶颈判断", "paragraphs": ["本次判断、依据和未知项。"], "sources": []},
-    {"kind": "upgrades", "title": "更换设备是否值得", "paragraphs": ["兼容替代品、实际收益边界和建议。"], "sources": []},
-    {"kind": "anomalies", "title": "异常与质量疑点", "paragraphs": ["已观察异常、证据强度和排查顺序。"], "sources": []}
+    {"kind": "bottleneck", "evidence_status": "needs_followup", "title": "瓶颈判断", "paragraphs": ["本次判断、依据和未知项。"], "sources": []},
+    {"kind": "upgrades", "evidence_status": "needs_followup", "title": "更换设备是否值得", "paragraphs": ["兼容替代品、实际收益边界和建议。"], "sources": []},
+    {"kind": "anomalies", "evidence_status": "needs_followup", "title": "异常与质量疑点", "paragraphs": ["已观察异常、证据强度和排查顺序。"], "sources": []}
   ]
 }
 ```
@@ -51,4 +57,10 @@ python3 scripts/report.py --input /path/to/results.json --evaluation-stdin --out
 
 最终 HTML/PDF 会重新计算[三维能力利用率](hardware-rating.md)：相对主控、相对接口、相对硬盘各一组星级，并给一句话点评。五项原始数值保留。AI 三段评价解释参考性质、可能限制及升级收益；低利用率不等于差品质，单次偏差不证明真伪。先补查准确型号的官方规格，不编造未知星级。接口支持能力、系统报告段、当前协商段及厂商额定文件测速分别引用；只有主控名也可以查官网，不因硬盘盒商品名未知而忽略已确认主控。
 
-当前自动完整方法 `drivespeed-auto-full-v2` 必须取得真实连续曲线验证的缓存后稳定写速；未取得时仅交付部分测试记录，不以参考或末段均值补齐，也不作为完整报告投稿。历史v1按原规则读取，不修改原记录或摘要。
+当前自动完整方法 `drivespeed-auto-full-v2` 仍须真实连续曲线验证的缓存后稳定写速；未取得时保留原方法partial，不以参考或末段均值补齐。该方法判据与投稿资格分开，投稿只核所需数据项。历史v1按原规则读取，不修改原记录或摘要。
+
+## 设备与网上实测证据
+
+可选 evaluation.evidence 的字段与采集/筛选规则见[设备证据](device-evidence.md)。三项评价统一引用这些资料及同盘已有测量，交代不同版本/工作集/连接的差异，不能简单合并平均。显著偏离时解释具体可疑点与其他原因；若怀疑身份或容量造假，明确 SMART 身份来自固件、可能伪造，并说明当前缺少何种独立验证。
+
+当前最终报告用 report_policy=verified_only；section.evidence_status仅取supported或needs_followup。后者与缺测/未确认原因放evaluation.followup和交付对话，不进入HTML/PDF。可选建议的全文仍可作为对话材料保留。只有投稿所需项缺失或对应核心测量不可靠才阻断投稿；可选分析、缓存缺项或背景提示不构成投稿门槛，也不授权强行重测。

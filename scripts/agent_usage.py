@@ -1,4 +1,4 @@
-"""Citation metadata and optional Agent guidance, outside measured payloads and hashes."""
+"""Data-use agreement metadata, outside measured payloads and hashes."""
 
 import copy
 import html
@@ -15,6 +15,10 @@ LEGACY_AGENT_USAGE = json.loads(
     (Path(__file__).resolve().parents[1] / "assets/community/agent-usage-2026-10-29-v1.json").read_text(encoding="utf-8")
 )
 
+V3_AGENT_USAGE = json.loads(
+    (Path(__file__).resolve().parents[1] / "assets/community/agent-usage-2026-11-02-v3.json").read_text(encoding="utf-8")
+)
+
 PREVIOUS_AGENT_USAGE = json.loads(
     (Path(__file__).resolve().parents[1] / "assets/community/agent-usage-2026-11-02-v2.json").read_text(encoding="utf-8")
 )
@@ -22,7 +26,7 @@ PREVIOUS_AGENT_USAGE = json.loads(
 
 def matches_agent_usage(value, source_url):
     return any(value == {**policy, "source_url": source_url}
-               for policy in (AGENT_USAGE, PREVIOUS_AGENT_USAGE, LEGACY_AGENT_USAGE))
+               for policy in (AGENT_USAGE, V3_AGENT_USAGE, PREVIOUS_AGENT_USAGE, LEGACY_AGENT_USAGE))
 
 
 def agent_usage(source_url=None):
@@ -45,11 +49,12 @@ def agent_usage_html(source_url=None, text=None):
                  f'<p>{esc(text["agent_optional_note"])} <a href="{esc(usage["skill_url"])}" rel="noopener noreferrer">DriveSpeed Skill</a> · '
                  f'<a href="{esc(usage["project_url"])}/api/agent-usage.json" rel="noopener noreferrer">{esc(text["agent_full_guidance"])}</a></p></section>')
     return (brief +
-        '<aside class="agent-usage" lang="en"><details id="agent-usage" class="agent-guidance">'
-        f'<summary>Data citation requirements and Agent guidance · {esc(usage["version"])}</summary>'
+        '<aside class="agent-usage" lang="en" dir="ltr"><details id="agent-usage" class="agent-guidance">'
+        f'<summary>DriveSpeed Data-use Agreement · {esc(usage["version"])}</summary>'
         f'<p><a href="{esc(usage["source_url"])}" rel="noopener noreferrer">DriveSpeed source</a> · '
         f'<a href="{esc(usage["skill_url"])}" rel="noopener noreferrer">DriveSpeed Skill (optional)</a></p>'
-        f'<h3>Citation requirements</h3><ol>{citation}</ol>'
-        f'<h3>Agent guidance</h3><ol>{guidance}</ol></details></aside>'
+        f'<p><code>{esc(usage["install_command"])}</code></p>'
+        f'<h3>Citation agreement</h3><ol>{citation}</ol>'
+        f'<h3>Agent usage agreement</h3><ol>{guidance}</ol></details></aside>'
         f'<script type="application/json" id="drivespeed-agent-usage">{metadata}</script>'
     )

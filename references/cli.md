@@ -2,32 +2,37 @@
 
 Python 3.10+。脚本只使用标准库，不需要 `.venv`。`--help`、`--dry-run` 与 `report.py` 不安装 fio、不访问网络、不跑 I/O。
 
-`benchmark.py` 默认运行唯一的正常自动完整测速（当前方法 `drivespeed-auto-full-v2`）；测速报告交付后，可另行授权容量与读写完整性检查。`--disk` 传用户所选磁盘的挂载路径，旧 `--target` 保持兼容；用户只选磁盘名称，挂载路径由 Agent 解析，不要求用户输入目录。系统盘根不可写时选同盘可写用户目录，不提权；output必须是新目录，默认diskbench-results；language为报告语言，ui-language为提示语言，默认都传当前对话语言，不另问语言；仅用户明确要求才改报告语言；format为html/pdf。messages/ui-messages提供完整翻译。keep-test-files保留自有文件。型号、接口事实与参考文件参数沿用，不改变工作负载。
+`benchmark.py --stage quick|full` 选择快速或深入测速。CLI省略stage仍默认full以兼容旧脚本；Skill首次必须显式quick，交付真实快速结果后按资料对照建议是否深入。无需full时不例行邀请长测；用户主动要求仍按有限计划执行。深入报告交付后，可按资格另行授权容量与读写完整性检查。`--disk` 传用户所选磁盘的挂载路径，旧 `--target` 保持兼容；用户只选磁盘名称，挂载路径由 Agent 解析，不要求用户输入目录。系统盘根不可写时选同盘可写用户目录，不提权；output必须是新目录，默认diskbench-results；language为报告语言，ui-language为提示语言，默认都传当前对话语言，不另问语言；仅用户明确要求才改报告语言；format为html/pdf。messages/ui-messages提供完整翻译。keep-test-files保留自有文件。型号、接口事实与参考文件参数沿用，不改变工作负载。
 
 ```bash
-python3 scripts/benchmark.py --disk /path/to/selected-volume --output /path/to/new-results --language zh-CN --ui-language zh-CN --dry-run
+python3 scripts/benchmark.py --disk /path/to/selected-volume --stage quick --output /path/to/new-results --language zh-CN --ui-language zh-CN --dry-run
 ```
 
-预演不安装、不写缓存/台账/输出、不创建锁或测试文件、不调用fio。返回实际硬件、自动plan、已有授权状态与绑定目标/计划/台账revision的plan_sha256。空间/余额不足时停止，不创建象征性小负载。
+预演不安装、不写缓存/输出/历史台账、不创建锁或测试文件、不调用fio；只返回硬件、空间与冻结计划，不是快速测速。Agent静默执行该检查，不问用户是否预演。用户已选盘并明确要求测速后，按固定quick计划正式执行，不增加一次许可问题；只查看计划的请求不授权实测。
 
-## 写入授权与累计额度
+## 阶段、确认与单次保护
 
-去掉dry-run即可同次准备依赖、观察启动前质量、重新核空间并确认具体有限计划后执行。TTY输入RUN确认显示的目标、占用、最大写入量、保留空间和时限。Agent已有真人授权时，用有界单行标准输入对象 `{"confirm_plan_sha256":"本次真实预演摘要"}` 传递同一确认，不贴给普通用户，不把输入JSON冒真人身份验证。摘要或已有台账revision变化即拒绝，不默认yes。Agent 可用 `--propose-write-bytes N` 生成一次普通测速的精确有限计划（字节），特别用于历史额度不足或已明确批准更大计划时；该参数本身不授权写入，预演不改台账。展示本次最大写量、历史余额和精确追加量，获得明确同意后仍须确认当前 plan_sha256；reserve 在同一事务内追加、预留，保留 scope 和历史 charged。普通用户无需选择档位或填写字节数。容量检查使用下文独立提案，不与此参数混用。
+- quick v2：1GiB专属文件，先顺序写/读1GiB，再4KiB QD1随机读/写各最多16MiB或5秒；最多写1040MiB，总采集保护90秒。不测缓存；投稿资格按四项核心及必要设备/条件/身份字段独立判断。
+- full：默认8GiB专属文件，单次最多写1TiB，11项核心测量和缓存观察；总采集保护2580秒（43分钟），覆盖全部job而非每项单独43分钟。达到字节上限或采集总时限停止，按实际证据判完整性；有界计划不保证取得缓存后稳定速度。
 
-私有SQLite台账位于用户.cache/drivespeed/write-allowance/write-allowance.sqlite3，与X社区状态独立。首次真实确认可建立本次显示的有限授权session；已有活动session时，即使换目录、重挂载、系统磁盘名改变或换目标，后续具体计划确认仍沿同一上限和余额，不自动新建额度。已有更低授权必须先恢复/迁移原记录，不能把缺失台账视为新额度。不得删除台账续额；需追加授权时先明确既有消耗与新有限权限，不自动续额。持续额度不以BSD/sdX瞬时设备名为域，不能把型号或卷UUID当作物理唯一ID。多个已验证既有授权只能通过内部导入/明确选择原scope记录恢复，不从设备名猜余额；新目标仍须确认本次具体计划。移除状态或更换用户不具防同权限恶意篡改保证，Agent仍须遵守真人已有累计限制。
+正式测试前展示实际占用、最大写量、保留空间及总超时保护。深入默认文案为：“这项测试需要较长时间，难以精确预计。我们把总超时保护设为43分钟；超过这个时间上限，程序将自动停止，并按已测得的数据生成报告。” 实际时限不同时替换分钟数。依赖准备、等待用户确认不计入采集时限；watchdog停止本次活跃fio后再清理和生成报告，不保证渲染在该上限内结束。不用43分钟表示预计耗时或ETA。
 
-正常测速和容量检查均在首写前于设备锁内原子预留全部计划写量；完整可信final计量后按实际写量退回差额。失败、取消、崩溃或尾写未知保守占整笔，不能记零或自动退额。使用有限专属工作文件，不清Trash。自动公式及读前覆盖条件见[缓存观察](cache-planning.md)。
+TTY输入RUN确认当前计划；Agent已取得覆盖本阶段计划的授权时，以有界单行标准输入 `{"confirm_plan_sha256":"本次真实预演摘要"}` 确认。不向普通用户贴hash/JSON，也不把该输入冒充身份验证。首次quick复用用户对所选盘测速的请求；full须等快速结果展示后的深入同意。目标或计划改变时重新预演，只有仍在既有授权内才可传入新摘要，否则停下核对。
+
+默认 `RunWriteProtection` 只约束当前运行，在首写前核对并预留本次计划的写量，采集期间累计计量，未知尾写不当作零；下一次测试使用独立单次计划，不因旧余额不足阻止运行。旧SQLite台账及scope/charged历史只读保留，不删除、不重置，也不自动迁移成新的运行授权。`--propose-write-bytes N` 保留兼容，用于当次normal/full的有限写量提案，不变成跨运行额度；参数本身不授权写入，不能扩大用户已同意的计划。容量检查使用自身的独立有限提案，不与该参数混用。不无限续写或自动重试。
+
+使用有限专属普通文件，不清Trash；公式及读前覆盖条件见[缓存观察](cache-planning.md)。
 
 
 ## 可选容量与读写完整性检查
 
-仅在正常测速报告已交付后邀请，拒绝或未回答不执行。使用同一个已选目标、正常测速的原始结果和全新输出路径先预演：
+仅在完整深入测速报告已交付且来源满足条件后邀请；quick不足以作为容量检查来源，拒绝或未回答不执行。使用同一个已选目标、正常测速的原始结果和全新输出路径先预演：
 
 ```bash
 python3 scripts/benchmark.py --target /path/to/same-selected-directory --capacity-from /path/to/normal/results.json --output /path/to/new-capacity-results --language zh-CN --ui-language zh-CN --dry-run
 ```
 
-向用户展示预演的占用、覆盖范围、安全保留、追加写入量、原台账剩余额度与估计时间范围。计划覆盖当前可用空间扣除安全保留后的区域，不实际填至 0；不让用户选择小/中/大档位。只创建唯一新普通文件，先完整写入一次再完整读取 CRC，不循环覆盖，不读写个人文件，不用正常测速的历史写入量冒充已校验容量。疑似扩容盘可能地址回绕而破坏已有数据，执行前必须说明风险，重要数据应先备份。估时用正常结果中的实测缓存后写速与持续读速，给时间范围而非完成保证；缺少依据时明确无法可靠估计。
+向用户展示预演的占用、覆盖范围、安全保留、本次写入量与估计时间范围。计划覆盖当前可用空间扣除安全保留后的区域，不实际填至 0；不让用户选择小/中/大档位。只创建唯一新普通文件，先完整写入一次再完整读取 CRC，不循环覆盖，不读写个人文件，不用正常测速的历史写入量冒充已校验容量。疑似扩容盘可能地址回绕而破坏已有数据，执行前必须说明风险，重要数据应先备份。估时用正常结果中的实测缓存后写速与持续读速，给时间范围而非完成保证；缺少依据时明确无法可靠估计。
 
 获得该具体计划的明确授权后，仅去掉 `--dry-run`，其余参数保持相同：
 
@@ -35,7 +40,7 @@ python3 scripts/benchmark.py --target /path/to/same-selected-directory --capacit
 python3 scripts/benchmark.py --target /path/to/same-selected-directory --capacity-from /path/to/normal/results.json --output /path/to/new-capacity-results --language zh-CN --ui-language zh-CN
 ```
 
-沿用上文 TTY `RUN` 或 Agent 标准输入 `confirm_plan_sha256` 规则，绑定当前目标、计划和台账 revision；不向普通用户暴露 hash/JSON，不把一份正常测速许可当作容量检查许可。复用同一累计写入台账、物理盘锁和首写前原子预留，不自动建立新额度。累计余额不足时，预演给出既有消耗、本次所需及精确追加有限量；`additional_authorized_bytes`、`capacity_run_cap_bytes` 与当前 `plan_sha256` 绑定。在同一个可选检查问题中明确说明并请求该追加量的授权，未答或拒绝则停止。用户明确确认后，reserve 在 CAS 同事务中追加批准量并预留，保持原 scope 和 charged；不自动获授权、不要求手动修改台账，也不增加文件大小/强度/额度调参问题。不降低覆盖规模冒充全覆盖。空间或身份变化使计划变化时重新预演，不沿旧摘要确认。
+沿用上文TTY `RUN` 或Agent标准输入 `confirm_plan_sha256`，绑定当前目标和独立容量计划；正常测速同意不覆盖容量检查。使用同一物理盘锁及单次RunWriteProtection，在首写前预留全部有限写量，旧SQLite历史不参与额度判断。在一个可选检查问题中展示并取得该具体计划同意，未答或拒绝就停止；不要求用户填写文件大小、强度或额度，不降低覆盖规模冒充全覆盖。空间或身份使计划变化时重新预演，不沿旧摘要确认。
 
 同一正式命令保留容量检查独立 results/report，并自动生成 `combined-results.json` 和 `combined-report/report.html`；`--format pdf` 时也生成派生 PDF。该派生正常测速报告包含容量摘要，原测速 raw、原方法和已有冻结投稿保持不变，不自动上传或重投。公共投稿 schema 本轮仍只含正常测速数据；容量证据留本地，不隐式增加字段、不沿旧同意改变 payload，也不能声称网站已展示容量检查。读取错误、CRC 不一致、取消及覆盖不完整必须保留真实状态与实际范围，不能标通过。通过仅说明本次计划文件写读一致，不是整盘无坏道、无假货或标称容量真实性保证；完整边界见 [诊断说明](diagnostics.md#可选容量与读写完整性检查)。本轮只有源码与模拟验证，不代表真实设备已通过。
 
@@ -60,7 +65,7 @@ results.json 包含 schema_version=1、target、environment、plan、cases、ser
 
 Windows 仅接受能唯一识别为在线、可写、非聚集物理盘的 GPT/MBR 盘符目录，网络、虚拟或无法识别的设备、挂载文件夹与 reparse 点均拒绝；以 Windows 系统范围的命名互斥锁按物理盘身份互斥。Windows 默认保留专属测试文件，需用户自行处理，空间不会自动释放；持续写入不提前发送 POSIX 信号，而是在预算或时限内结束。Windows 社区投稿与横评也为实验性实现，私有缓存须位于支持持久 ACL 的本地卷（如 NTFS）；原生权限、锁及 SQLite 尚待实机验收。
 
-输出与目标路径不接受符号链接组件。以物理设备为单位加锁，APFS 多卷共享物理盘也互斥；Linux通过findmnt/lsblk机器可读依赖树识别本地NVMe/SATA/USB及LVM/RAID等底层盘，实验性支持；已知网络块传输（如iSCSI、NBD和NVMe-over-Fabrics）拒绝；NVMe须正向识别PCIe，传输缺失须有本地sysfs证据，不能默认当作USB或物理盘。普通文件层级保护不抵御同权限恶意进程篡改，也不提供断电保证。系统盘可写用户目录可由用户明确选择；只读/无权限目录、网络盘、无法完整识别物理依赖的设备及裸盘拒绝。磁盘映像/loop仅在本地普通backing file及其宿主物理依赖可完整解析时允许，标为虚拟文件系统性能而非物理盘性能；未知映射不使用弱锁放行。新增路径已做fixture和macOS只读目录识别验证，尚未真实I/O验收。
+输出与目标路径不接受符号链接组件。以物理设备为单位加锁，APFS 多卷共享物理盘也互斥；Linux通过findmnt/lsblk机器可读依赖树识别本地NVMe/SATA/USB及LVM/RAID等底层盘，实验性支持；已知网络块传输（如iSCSI、NBD和NVMe-over-Fabrics）拒绝；NVMe须正向识别PCIe，传输缺失须有本地sysfs证据，不能默认当作USB或物理盘。普通文件层级保护不抵御同权限恶意进程篡改，也不提供断电保证。系统盘根不可写时由Agent解析同盘现有可写用户目录；只读/无权限目录、网络盘、无法完整识别物理依赖的设备及裸盘拒绝。磁盘映像/loop仅在本地普通backing file及其宿主物理依赖可完整解析时允许，标为虚拟文件系统性能而非物理盘性能；未知映射不使用弱锁放行。新增路径已做fixture和macOS只读目录识别验证，尚未真实I/O验收。
 
 macOS/Linux 的物理盘锁默认保存在 `~/.cache/drivespeed/device-locks`。使用同一用户缓存根的新版程序不会因不同任务的 `TMPDIR` 产生独立锁；隔离用户主目录或修改缓存根的进程不共享该命名空间。同时保留当前临时目录中的旧版锁以兼容同一 `TMPDIR` 的旧程序。使用其他 `TMPDIR` 的旧版程序不受新锁保护，不能混用版本并发测速；遇到残留锁须核实归属，不自动删锁或终止进程。Windows 仍使用原有命名互斥锁。
 
@@ -68,7 +73,7 @@ macOS/Linux 的物理盘锁默认保存在 `~/.cache/drivespeed/device-locks`。
 
 每次实际测速重新采集 `hardware.computer / drive / enclosure`，字段为 model/source；enclosure 另有未确认关联的 bridge_candidates。缺失字段保留 null，不复用历史报告。`--computer-model`、`--drive-model`、`--enclosure-model` 可提供用户已确认的型号，source=user。system_profiler 只按 target.physical_devices 中的 BSD 标识选择硬盘，Linux 以 lsblk 匹配物理盘，Windows 使用已识别目标磁盘的系统型号；原始硬件清单和序列号不存入结果。
 
-`assets/project.json` 拥有报告的仓库 URL。报告包含翻译后的简介及显式 HTTPS 超链接；离线打开不访问该链接，用户点击时才联网。旧结果没有 hardware 时报告标为未确认，不把当前机器补录成过去的测试机器。
+`assets/project.json` 拥有报告的仓库 URL。报告包含翻译后的简介及显式 HTTPS 超链接；离线打开不访问该链接，用户点击时才联网。旧结果没有hardware时报告省略该区块，在交付对话说明，不把当前机器补录成过去的测试机器。
 
 
 ## 读取 HTML/PDF 报告
@@ -78,12 +83,12 @@ HTML 先显示关键速度、硬件及持续写入表现，环境和方法使用
 AI Agent 优先读取 `results.json` 的原始数值。读取 HTML 时可用 `#results` / `#measurements` 定位表格，`data-metric` 定位摘要与持续写入指标，`dt` / `dd` 对应标签和值；折叠区域不等于缺失数据。输出 JSON 和测速数据格式不因布局变更而改变。
 
 
-当前v2持续阶段必须有有效连续采样的稳定降速窗口和正有限缓存后写速，且其余核心统计完整才返回exit0；字节/时间先到但未取得该值返回partial/exit6，真实错误与取消保留原码。历史v1按旧判据读取，不追改结论。硬盘盒商品型号用--enclosure-model，主控型号用--controller-model，只填本次用户已确认的事实。
+深入full的当前v2持续阶段必须有有效连续采样的稳定降速窗口和正有限缓存后写速，且其余核心统计完整才返回exit0；字节/时间先到但未取得该值返回partial/exit6，真实错误与取消保留原码。历史v1按旧判据读取，不追改结论。硬盘盒商品型号用--enclosure-model，主控型号用--controller-model，只填本次用户已确认的事实。
 
 参考数据（可选）：benchmark.py 和 report.py 均支持 `--reference-file /path/to/references.json`。文件由 AI 根据实际打开的官网或可信评测整理，使用报告语言；JSON 校验和当前型号匹配不代表脚本独立核实了网页事实。缺少参考时照常生成报告。详见 [参考数据研究](reference-research.md)。
 
 
-网络参考本地缓存位于用户 `.cache/drivespeed/references/<硬件组合>/<语言>.json`（或 XDG_CACHE_HOME）。默认 30 天复核，读取/翻译不更改原查阅日期。`--dry-run` 返回本次硬件、reference_cache 状态及其他已缓存语言，不写缓存；有新参考文件的正式执行/报告生成会保存公开参数。`--refresh-references` 绕过缓存，由 AI 重新核查后提供文件，Python 不暗中联网。过期离线缓存可展示并标为待更新；测量结果不进入此缓存。
+网络参考本地缓存位于用户 `.cache/drivespeed/references/<硬件组合>/<语言>.json`（或 XDG_CACHE_HOME）。默认 30 天复核，读取/翻译不更改原查阅日期。`--dry-run` 返回本次硬件、reference_cache 状态及其他已缓存语言，不写缓存；有新参考文件的正式执行/报告生成会保存公开参数。`--refresh-references` 绕过缓存，由 AI 重新核查后提供文件，Python 不暗中联网。过期离线缓存保留原日期展示，待更新状态仅在交付对话说明；测量结果不进入此缓存。
 
 
 面向普通读者的“日常使用解读”从本次 results.json 动态计算：10GB 文件耗时仅为吞吐换算，不是实测复制时间；QD1/QD16 对照只展示同一设备内、块大小匹配且已完成的测试，不称为软件提速。缺项省略对应换算，不能复用开发者机器的解读或补造分数。HTML 的完整测试表和指标说明默认折叠，PDF 打印会展开并保留所有数值。
@@ -95,7 +100,7 @@ AI Agent 优先读取 `results.json` 的原始数值。读取 HTML 时可用 `#r
 `report.py --comparison-id ID --community-state-dir /path/to/private-state` 额外生成 `comparison.html`，PDF 模式同时生成 `comparison.pdf`；两份报告读取同一 typed 比较版本。`--evaluation-stdin` 从标准输入读取有界、run_id/语言绑定的评价对象，不创建 JSON 缓存，与旧 `--evaluation-file` 互斥。HTML/PDF 不自动刷新远端样本；网络刷新须经社区命令显式发起。
 
 
-新增 hardware.links 保存目标关联的最少链路元数据；旧结果缺失时报告显示未知，不补录当前机器。报告保留硬件链路/官方规格、五项原始速度和整份三维五级评价；质量unknown/nonquiet不作设备星级或瓶颈归因；可选参考条件与分界见[硬件与五级评价](hardware-rating.md)。schema_version仍为1；自动方法v1/v2必须携带公开quality.status；v2公开投稿还要求持续项cache.status=observed和正有限post_cache_mb_s，旧drivespeed-file-v1缺省保持缺省、原hash不变。平均完成延迟以µs传递，服务端只验证结构，不宣称复验本地原始曲线。
+新增 hardware.links 保存目标关联的最少链路元数据；旧结果缺失时报告省略对应项，在对话说明；不补录当前机器。报告保留硬件链路/官方规格、五项原始速度和整份三维五级评价；质量unknown/nonquiet不作设备星级或瓶颈归因；可选参考条件与分界见[硬件与五级评价](hardware-rating.md)。schema_version仍按当前合同；投稿只核四项QD1核心及必要设备/条件/私有身份数据，不要求full的11项或cache.status/post_cache_mb_s。quality/measurement_quality不写新报告、导出JSON或投稿JSON，背景仅对话说明；旧原始记录和hash保留。平均完成延迟以µs传递，服务端只验证结构，不宣称复验本地原始曲线。
 
 ## 本地电脑显示与接口事实
 
@@ -116,4 +121,4 @@ Web 维护命令的 `product_profile_import` 是离线 DB-only 资料导入，�
 
 ## 临时目录与历史残留
 
-程序在所选磁盘根目录（系统盘不可写时为同盘可写位置）创建 `.diskbench-<run_id>`，仅包含 payload.bin、README.txt 和归属标记。报告保存在独立 output，不随临时目录清理。正式执行取得物理盘独占锁后静默检查该位置的历史目录；仅精确匹配标记、根/目录身份、当前用户及普通单链接文件，且未明确 retain 的目录自动移入系统废纸篓。未知/未标记的旧目录、链接、夹带个人文件的目录保留，不递归搜索整盘，也不解锁正在进行的测试。结果的 startup_cleanup 记录实际处理及失败；预演不清理，累计写入台账不因清理而重置。废纸篓数据仍占空间，程序不自动清空；Windows 按既有保留策略处理，不宣称已释放。
+程序在所选磁盘根目录（系统盘不可写时为同盘可写位置）创建 `.diskbench-<run_id>`，仅包含 payload.bin、README.txt 和归属标记。报告保存在独立 output，不随临时目录清理。正式执行取得物理盘独占锁后静默检查该位置的历史目录；仅精确匹配标记、根/目录身份、当前用户及普通单链接文件，且未明确 retain 的目录自动移入系统废纸篓。未知/未标记的旧目录、链接、夹带个人文件的目录保留，不递归搜索整盘，也不解锁正在进行的测试。结果的 startup_cleanup 记录实际处理及失败；预演不清理，旧SQLite历史不因清理而删除或重置，单次写量计数不因空间复用抵扣。废纸篓数据仍占空间，程序不自动清空；Windows 按既有保留策略处理，不宣称已释放。

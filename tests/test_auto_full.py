@@ -227,6 +227,25 @@ class EvidenceTests(unittest.TestCase):
             self.assertIsNone(summary[key],key)
         self.assertEqual(len(points),120)
 
+    def test_irregular_diagnosis_preserves_independent_curve_failure(self):
+        from workloads import cache_assessment
+        points = [dict(seconds=i + (0.076 if i >= 20 else 0),
+                       mb_s=3300, direction="write") for i in range(1, 121)]
+        actual = cache_assessment(points, sampling_status="collected_irregular")
+        self.assertEqual(actual["status"], "sampling_gaps")
+        self.assertEqual(actual["curve_diagnostic"], "no_drop_observed")
+        self.assertIsNone(actual["post_cache_mb_s"])
+        self.assertIsNone(actual["cache_capacity_estimate_bytes"])
+        for point in points[8:]:
+            point["mb_s"] = 900
+        actual = cache_assessment(points, sampling_status="collected_irregular")
+        self.assertEqual(actual["curve_diagnostic"], "observed_drop_stable")
+        self.assertEqual(actual["status"], "sampling_gaps")
+        self.assertIsNone(actual["post_cache_mb_s"])
+        points[20]["seconds"] = points[19]["seconds"]
+        actual = cache_assessment(points, sampling_status="collected_irregular")
+        self.assertEqual(actual["curve_diagnostic"], "sampling_gaps")
+
     def test_new_method_initial_five_seconds_requires_observed_coverage(self):
         from workloads import sustained_summary
         for times in ((1.001,2.003,3.005),(.999,1.999,2.999,3.999,4.999)):
@@ -554,7 +573,7 @@ class CommunityContractTests(unittest.TestCase):
         result["sustained_summary"]["tail_mean_mb_s"] = 9191919
         original = copy.deepcopy(result)
         payload = community_data.project_result(result,"https://x.com/fixture_user")
-        self.assertEqual(payload["quality"],{"status":"quiet_observed"})
+        self.assertNotIn("quality", payload)
         self.assertEqual(payload["cases"][0]["write"]["latency_us"]["mean"],12.34)
         self.assertEqual(payload["cases"][0]["cache"]["status"],"incomplete")
         self.assertIsNone(payload["cases"][0]["cache"]["capacity_estimate_bytes"])
@@ -570,7 +589,7 @@ class CommunityContractTests(unittest.TestCase):
         self.assertNotIn("9,191,919",html)
         self.assertEqual(result,original)
 
-    def test_mean_and_quality_roundtrip_and_legacy_absence(self):
+    def test_mean_roundtrip_preserves_legacy_absence_and_excludes_private_observations(self):
         from test_community import local_result, ID
         legacy = community_data.project_result(local_result(), "https://x.com/fixture_user", submission_id=ID)
         self.assertEqual(community_data.digest(legacy), "e0e0173b5b968a46798a03f926c5c21efe30713379b9d8712c16f23d00332129")
@@ -578,7 +597,7 @@ class CommunityContractTests(unittest.TestCase):
         self.assertTrue(all(c[d]["latency_us"]["mean"] is None for c in legacy["cases"] for d in ("read", "write")))
         for status in ("quiet_observed", "interference_observed", "visibility_limited"):
             payload = community_data.project_result(community_result(status), "https://x.com/fixture_user")
-            self.assertEqual(payload["quality"], {"status": status})
+            self.assertNotIn("quality", payload)
             self.assertNotIn("MUST-NOT-PUBLISH", json.dumps(payload))
             self.assertEqual(payload["cases"][0]["write"]["latency_us"]["mean"], 12.34)
             with tempfile.TemporaryDirectory() as root, CommunityStore(Path(root) / "private") as store:
@@ -589,30 +608,43 @@ class CommunityContractTests(unittest.TestCase):
                 sample["submission_id"] = "22222222-2222-4222-8222-222222222222"
                 items = [{"record": {"id": sample["submission_id"], "url": "https://drivespeed.anz.tv/benchmarks/" + sample["submission_id"], "created_at": "2026-10-30T00:00:00Z", "submission": sample}, "matched_on": ["drive"], "differences": []}]
                 replace(store.db, identifier, items)
-                self.assertEqual(read(store.db, identifier)[0]["record"]["submission"], community_data.normalise_payload(sample))
+                self.assertEqual(read(store.db, identifier)[0]["record"]["submission"], community_data.normalise_payload(community_data.without_private_metadata(sample)))
 
-    def test_partial_or_missing_quality_and_mean_cannot_publish(self):
-        for mutate in (lambda r: r.pop("measurement_quality"),
-                       lambda r: r["cases"][0]["metrics"]["write"]["latency_us"].pop("mean"),
-                       lambda r: r["cases"][0]["metrics"].update(runtime_ms=2000)):
+    def test_missing_or_invalid_core_is_rejected_despite_claimed_completeness(self):
+        for invalid in ("mean", "p95", "iops", "partial", "runtime", "missing"):
             result = community_result()
-            mutate(result)
+            case = next(c for c in result["cases"] if c["name"] == "seq_read")
+            if invalid in ("mean", "p95"):
+                case["metrics"]["read"]["latency_us"].pop("mean" if invalid == "mean" else "95")
+            elif invalid == "iops":
+                case["metrics"]["read"]["iops"] = 0
+            elif invalid == "partial":
+                case["status"] = "partial"
+            elif invalid == "runtime":
+                case["metrics"]["runtime_ms"] = 0
+            else:
+                result["cases"].remove(case)
             result["completeness"] = {"complete": True, "missing_core": []}
-            with self.assertRaises(community_data.CommunityError):
+            with self.subTest(invalid=invalid), self.assertRaises(community_data.CommunityError):
                 community_data.project_result(result, "https://x.com/fixture_user")
 
-    def test_new_comparisons_require_explicit_quiet_on_both_sides(self):
+    def test_partial_optional_work_or_missing_quality_does_not_revoke_valid_core(self):
+        result = community_result(); result.pop("measurement_quality")
+        result["outcome"] = "partial"
+        result["cases"][0]["status"] = "partial"  # Sustained is optional for core publication, not full-v2 qualification.
+        projected = community_data.project_result(result, "https://x.com/fixture_user")
+        community_data.require_report_data(projected)
+        self.assertNotIn("quality", projected)
+        self.assertEqual(projected["cases"][0]["cache"]["status"], "incomplete")
+
+    def test_new_comparisons_with_missing_public_context_are_unknown_background(self):
         from community_comparison import _conditions
-        quiet = community_data.project_result(community_result(), "https://x.com/fixture_user")
+        local = community_data.project_result(community_result(), "https://x.com/fixture_user")
         for status in (None, "visibility_limited", "interference_observed"):
-            other = copy.deepcopy(quiet)
-            if status is None:
-                other.pop("quality")
-                other["tool"]["method_version"] = "drivespeed-file-v1"
-            else:
-                other["quality"]["status"] = status
-            self.assertIn("measurement_quality", _conditions(quiet, other))
-            self.assertIn("measurement_quality", _conditions(other, other))
+            other = community_data.project_result(community_result(status), "https://x.com/fixture_user")
+            self.assertIn("unknown_condition", _conditions(local, other))
+            self.assertIn("unknown_condition", _conditions(other, other))
+            self.assertNotIn("measurement_quality", _conditions(local, other))
 
 
 if __name__ == "__main__":

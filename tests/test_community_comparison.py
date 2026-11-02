@@ -1,5 +1,6 @@
 """Condition grouping and historical typed comparison facts, synthetic only."""
 import copy
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -7,9 +8,9 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"scripts"))
 from test_community import local_result, state_dir, ID
 from test_community_network import receipt
-from community_data import POLICY, CommunityError, project_result, digest
+from community_data import POLICY, CommunityError, project_result, digest, without_private_metadata
 from community_store import CommunityStore
-from community_comparison import build_comparison, read_comparison, _conditions
+from community_comparison import build_comparison, read_comparison, _conditions, _statistics
 
 
 class ComparisonTests(unittest.TestCase):
@@ -41,17 +42,27 @@ class ComparisonTests(unittest.TestCase):
     def facts(self):
         summary = build_comparison(self.store, self.result, ID)
         return summary, read_comparison(self.store, summary["comparison_id"])
-    def test_three_records_compare_and_latency_delta_keeps_mathematical_sign(self):
+    def test_public_records_keep_measurements_without_claiming_comparable_conditions(self):
         self.save(); summary, facts = self.facts()
-        self.assertEqual(summary["comparable_group_count"], 11)
+        self.assertEqual(summary["comparable_group_count"], 0)
         metrics = {m["metric"]: m for m in facts["groups"][0]["metrics"]}
-        self.assertEqual(metrics["mb_s"]["n"], 3)
-        self.assertAlmostEqual(metrics["mb_s"]["delta_percent"], 100)
-        self.assertAlmostEqual(metrics["p95"]["delta_percent"], 200)
+        self.assertEqual(metrics["mb_s"]["n"], 0)
+        self.assertIsNone(metrics["mb_s"]["delta_percent"])
+        self.assertIsNone(metrics["p95"]["delta_percent"])
         self.assertIsNone(metrics["mean"]["delta_percent"])
         self.assertTrue(all(r["verification"] == "unverified" for r in facts["groups"][0]["references"]))
         self.assertTrue(all(r["conditions"]["write_budget_bytes"] == self.local["plan"]["write_budget_bytes"]
                             for r in facts["groups"][0]["references"]))
+        self.assertTrue(all(not r["comparable"] and "unknown_condition" in r["differences"]
+                            for g in facts["groups"] for r in g["references"]))
+        self.assertEqual(facts["groups"][0]["references"][0]["values"]["mb_s"], self.local["cases"][0]["read"]["mb_s"] / 2)
+
+    def test_statistics_keep_mathematical_sign_and_extreme_values_finite(self):
+        self.assertEqual(_statistics(2, [1, 1, 1])["delta_percent"], 100)
+        self.assertEqual(_statistics(3, [1, 1, 1])["delta_percent"], 200)
+        self.assertIsNone(_statistics(1, [5e-324] * 3)["delta_percent"])
+        self.assertIsNone(_statistics(1, [0] * 3)["delta_percent"])
+        self.assertIsNone(_statistics(1, [1] * 2)["median"])
 
     def test_configured_budget_not_measured_writes_controls_comparability(self):
         for multiplier in (2, 4):
@@ -108,7 +119,7 @@ class ComparisonTests(unittest.TestCase):
             self.store.close()
         self.store = CommunityStore(directory)
         new_summary, new = self.facts()
-        self.assertEqual(new_summary["comparable_group_count"], 11)
+        self.assertEqual(new_summary["comparable_group_count"], 0)
         self.assertTrue(all(r["conditions"]["write_budget_bytes"] == self.local["plan"]["write_budget_bytes"] for g in new["groups"] for r in g["references"]))
         self.assertTrue(all(row[0] is None and row[1] == "sentinel" for row in self.store.db.execute(
             "SELECT write_budget_bytes,legacy_note FROM comparison_source_context WHERE comparison_id=?", (comparison_id,))))
@@ -120,13 +131,13 @@ class ComparisonTests(unittest.TestCase):
         facts = read_comparison(self.store, selected["comparison_id"])
         self.assertTrue(all(not r["comparable"] and "write_budget_bytes" in r["differences"] for g in facts["groups"] for r in g["references"]))
         self.assertTrue(all(m["n"] == 0 and m["median"] is None for g in facts["groups"] for m in g["metrics"]))
-        self.assertEqual(self.store.db.execute("SELECT MAX(n) FROM comparison_metrics").fetchone()[0], 3)
+        self.assertEqual(self.store.db.execute("SELECT MAX(n) FROM comparison_metrics").fetchone()[0], 0)
 
     def test_finite_extreme_values_never_produce_infinite_percentage(self):
         self.save(change=lambda p:p["cases"][0]["read"].update(mb_s=5e-324))
         _, facts = self.facts()
         metric = next(m for m in facts["groups"][0]["metrics"] if m["metric"] == "mb_s")
-        self.assertEqual(metric["n"],3)
+        self.assertEqual(metric["n"],0)
         self.assertIsNone(metric["delta_percent"])
     def test_unknown_or_different_conditions_are_background_without_statistics(self):
         for change in (lambda p: p["storage"].update(negotiated_bps=None),
@@ -136,11 +147,58 @@ class ComparisonTests(unittest.TestCase):
             self.assertEqual(summary["comparable_group_count"], 0)
             self.assertTrue(all(m["median"] is None and m["delta_percent"] is None for m in facts["groups"][0]["metrics"]))
             self.assertTrue(all(r["differences"] and not r["comparable"] for r in facts["groups"][0]["references"]))
-    def test_less_than_three_and_repeated_cases_do_not_manufacture_sample_count(self):
-        self.save(2, lambda p: p["cases"].append(copy.deepcopy(p["cases"][0])))
+    def test_less_than_three_records_do_not_manufacture_sample_count(self):
+        self.save(2)
         summary, facts = self.facts()
         self.assertEqual(summary["sample_count"], 2); self.assertEqual(summary["comparable_group_count"], 0)
         self.assertTrue(all(m["n"] <= 2 and m["median"] is None for m in facts["groups"][0]["metrics"]))
+
+    def test_repeated_cases_are_rejected_without_freezing_partial_samples(self):
+        with self.assertRaises(CommunityError):
+            self.save(2, lambda p: p["cases"].append(copy.deepcopy(p["cases"][0])))
+        self.assertEqual(self.store.samples(ID), [])
+
+    def test_method_profile_file_and_workload_differences_remain_distinct(self):
+        for section, field, value, reason in (("tool", "method_version", "drivespeed-auto-full-v1", "method_version"),
+                ("plan", "profile", "cache", "profile"), ("plan", "file_bytes", 2_097_152, "file_bytes")):
+            sample = copy.deepcopy(self.local); sample[section][field] = value
+            self.assertIn(reason, _conditions(self.local, sample))
+        self.save(change=lambda p: p["cases"][0].update(qd=2))
+        _, facts = self.facts()
+        self.assertIn("workload_or_measurement", facts["groups"][0]["references"][0]["differences"])
+
+    def test_private_identity_and_observations_never_enter_comparison_output(self):
+        identity = {"version": 1, "fingerprint": "a" * 64, "source": "smartctl:serial_number", "attachment": "external"}
+        old = copy.deepcopy(self.local); old["device_identity"] = identity; old["quality"] = {"status": "visibility_limited"}
+        self.store.close(); self.store = CommunityStore(state_dir())
+        self.store.create(old, self.result["run_id"], "fixture-only-path")
+        self.local = self.store.payload(ID); self.save()
+        expected = digest(self.local)
+        selected, facts = self.facts()  # The same old raw has no device_identity.
+        self.assertEqual(facts["content_sha256"], expected)
+        self.assertEqual(facts["source_projection_sha256"], digest(without_private_metadata(self.local)))
+        self.assertEqual(self.store.payload(ID), self.local)
+        public = json.dumps(facts) + json.dumps(selected)
+        for secret in ('"quality"', '"device_identity"', '"measurement_quality"', "visibility_limited", identity["fingerprint"], "background load"):
+            self.assertNotIn(secret, public)
+
+    def test_historical_private_conditions_are_projected_without_rewriting_frozen_facts(self):
+        self.save(); selected, _ = self.facts(); comparison_id = selected["comparison_id"]
+        db = self.store.db
+        db.execute("UPDATE comparison_source_context SET measurement_quality='interference_observed'")
+        db.execute("UPDATE comparison_differences SET field='measurement_quality' WHERE field='unknown_condition'")
+        db.execute("UPDATE comparison_sources SET comparable=1")
+        db.execute("UPDATE comparison_metrics SET n=3,median=1,minimum=1,maximum=1,delta_percent=100")
+        db.commit()
+        before = {table: [tuple(r) for r in db.execute("SELECT * FROM " + table)] for table in
+                  ("comparisons", "comparison_metrics", "comparison_sources", "comparison_source_context", "comparison_differences")}
+        facts = read_comparison(self.store, comparison_id)
+        self.assertTrue(all(m["n"] == 0 and m["median"] is None for g in facts["groups"] for m in g["metrics"]))
+        self.assertTrue(all("unknown_condition" in r["differences"] and not r["comparable"] for g in facts["groups"] for r in g["references"]))
+        self.assertNotIn("measurement_quality", json.dumps(facts))
+        self.assertNotIn("interference_observed", json.dumps(facts))
+        for table, rows in before.items():
+            self.assertEqual([tuple(r) for r in db.execute("SELECT * FROM " + table)], rows)
     def test_comparison_requires_exact_original_result_and_stores_no_partial_facts(self):
         self.save(); different = copy.deepcopy(self.result); different["run_id"] = "other-run"
         with self.assertRaisesRegex(CommunityError, "integrity_mismatch"):
@@ -164,6 +222,8 @@ class ComparisonTests(unittest.TestCase):
         facts = read_comparison(self.store, summary["comparison_id"])
         self.assertFalse(facts["context_complete"])
         self.assertIsNone(facts["groups"][0]["references"][0]["conditions"])
+        self.assertTrue(all(not r["comparable"] and "unknown_condition" in r["differences"] for g in facts["groups"] for r in g["references"]))
+        self.assertTrue(all(m["n"] == 0 and m["median"] is None for g in facts["groups"] for m in g["metrics"]))
     def test_recovery_only_report_is_not_eligible_for_upload(self):
         self.result["cases"][0]["name"] = "recovery_write"
         self.result["cases"][0]["idle_seconds"] = 30

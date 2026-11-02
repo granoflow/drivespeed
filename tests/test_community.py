@@ -63,6 +63,16 @@ def payload():
     return data.project_result(local_result(), "https://x.com/fixture_user", submission_id=ID)
 
 
+def publishable_result():
+    """Synthetic publication identity; legacy local_result deliberately has none."""
+    result = local_result()
+    result["device_identity"] = {"version": 1, "fingerprint": "d" * 64, "source": "smartctl:serial_number", "attachment": "external"}
+    result["hardware"]["access_interface"] = {"name": "USB4 40 Gbps", "source": "user"}
+    result["hardware"]["controller"] = {"model": "Fixture controller", "source": "user"}
+    result["target"]["negotiated_bps"] = 40_000_000_000
+    return result
+
+
 def state_dir():
     root = Path(tempfile.mkdtemp(prefix="drivespeed-community-fixture-")).resolve()
     if sys.platform == "win32":
@@ -117,11 +127,15 @@ class ProjectionTests(unittest.TestCase):
         with self.assertRaises(data.CommunityError):
             data.validate_payload(result)
 
-    def test_only_completed_full_report_is_projected(self):
-        for change in (lambda r: r["plan"].update(profile="quick"),
-                       lambda r: r.update(outcome="partial"),
-                       lambda r: r["cases"].pop(),
-                       lambda r: r["cases"][0].update(status="failed")):
+    def test_profile_and_overall_outcome_do_not_replace_core_data_eligibility(self):
+        for change in (lambda r: r["plan"].update(profile="quick"), lambda r: r.update(outcome="partial"),
+                       lambda r: r["cases"].pop()):  # Optional sustained-read case.
+            result = local_result(); change(result)
+            projected = data.project_result(result, "https://x.com/fixture_user")
+            data.require_report_data(projected)
+
+    def test_missing_or_failed_core_cannot_be_projected(self):
+        for change in (lambda r: r["cases"].pop(0), lambda r: r["cases"][0].update(status="failed")):
             result = local_result(); change(result)
             with self.assertRaises(data.CommunityError):
                 data.project_result(result, "https://x.com/fixture_user")
@@ -349,42 +363,51 @@ class OfflineCLITests(unittest.TestCase):
     def setUp(self):
         self.root = state_dir()
         self.source = self.root / "results.json"
-        result = local_result()
-        result["measurement_quality"] = {"status": "quiet_observed"}
+        result = publishable_result()
         self.source.write_text(json.dumps(result), encoding="utf-8")
         self.cache = self.root / "cache"
 
     def call(self, *args):
         output = io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()), \
+             patch.object(community, "language_default", return_value="en"), \
+             patch("device_identity.collect_device_identity", return_value=None), \
              patch("subprocess.run", side_effect=AssertionError("offline operation must not launch processes")):
             code = community.main(list(args))
         return code, json.loads(output.getvalue())
 
-    def test_unqualified_background_blocks_prepare_without_creating_state(self):
-        for status in (None, "visibility_limited", "interference_observed"):
+    def test_background_observations_do_not_block_prepare_or_enter_public_projection(self):
+        for index, status in enumerate((None, "visibility_limited", "interference_observed")):
             from test_auto_full import community_result
             result = community_result(status)
+            identity = publishable_result()
+            result["device_identity"] = identity["device_identity"]
+            result["hardware"]["access_interface"] = identity["hardware"]["access_interface"]
+            result["hardware"]["controller"] = identity["hardware"]["controller"]
             if status is None:
                 result.pop("measurement_quality")
             self.source.write_text(json.dumps(result))
             before = self.source.read_bytes()
+            cache = self.root / ("conditions-" + str(index))
             code, output = self.call("prepare", "--input", str(self.source),
-                "--x-profile", "https://x.com/fixture_user", "--state-dir", str(self.cache),
+                "--x-profile", "https://x.com/fixture_user", "--state-dir", str(cache),
                 "--ui-language", "zh")
-            self.assertNotEqual(code, 0)
-            self.assertIn("measurement_quality", json.dumps(output))
-            self.assertIn("重新测量", json.dumps(output, ensure_ascii=False))
-            self.assertFalse(self.cache.exists())
+            self.assertEqual(code, 0)
+            self.assertEqual(output["status"], "prepared")
+            for private in ("measurement_quality", "device_identity", "MUST-NOT-PUBLISH", "visibility_limited", "interference_observed"):
+                self.assertNotIn(private, json.dumps(output))
+            with CommunityStore(cache) as store:
+                self.assertNotIn("quality", store.payload(output["submission_id"]))
             self.assertEqual(self.source.read_bytes(), before)
 
-    def test_old_unqualified_snapshot_cannot_receive_new_publication_consent(self):
+    def test_legacy_snapshot_without_identity_is_readable_but_cannot_receive_new_consent(self):
         with CommunityStore(self.cache) as store:
             store.create(payload(), "old-run", self.source)
         code, output = self.call("consent", "--submission-id", ID, "--decision", "publish",
             "--notice-version", data.POLICY["notice_version"], "--state-dir", str(self.cache))
         self.assertEqual(code, 2)
-        self.assertEqual(output["error"]["code"], "measurement_quality")
+        self.assertEqual(output["error"]["code"], "missing_parameters")
+        self.assertEqual(output["error"]["fields"], ["device_identity"])
         code, output = self.call("preview", "--submission-id", ID, "--state-dir", str(self.cache))
         self.assertEqual(code, 0)
         code, output = self.call("consent", "--submission-id", ID, "--decision", "declined",

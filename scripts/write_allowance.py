@@ -36,6 +36,40 @@ def plan_hash(target, config, allowance):
     return hashlib.sha256(json.dumps(bound, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
+class RunWriteProtection:
+    """One confirmed finite run; old SQLite history is never a new-run quota."""
+
+    def __init__(self):
+        self.target = None
+        self.reservation = None
+        self.actual_bytes = None
+
+    def read(self, target):
+        identity = (str(target["path"]), target["st_dev"], target["inode"], device_key(target))
+        if self.target is not None and self.target != identity:
+            raise BenchError("unsafe_target", "Test target changed")
+        self.target = identity
+        # A stable per-instance snapshot binds confirmation, not a grant to do IO.
+        scope = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
+        return dict(present=True, scope_id=scope, revision=0, mode="single_run",
+                    run_cap=1024 * GIB, remaining=1024 * GIB)
+
+    def reserve(self, target, config, expected, run_id, digest):
+        amount = _bytes(config["max_write_bytes"])
+        if (self.reservation is not None or expected != self.read(target)
+                or digest != plan_hash(target, config, expected)
+                or amount <= 0 or amount > _bytes(config["write_budget"])):
+            raise BenchError("unsafe_target", "Invalid or already used single-run write protection")
+        self.reservation = (run_id, amount)
+
+    def settle(self, run_id, actual):
+        if self.reservation is None or self.reservation[0] != run_id or self.actual_bytes is not None:
+            raise BenchError("unsafe_target", "Unknown or already settled test")
+        if actual is not None and _bytes(actual) > self.reservation[1]:
+            raise BenchError("unsafe_target", "Measured writes exceeded this test's limit")
+        self.actual_bytes = actual if actual is not None else "unknown"
+
+
 class WriteAllowance:
     """One active finite session; device renaming never creates a new allowance."""
 

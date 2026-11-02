@@ -78,17 +78,19 @@ class MandatoryCacheTests(unittest.TestCase):
         result['tool'] = dict(method_version=AUTO_METHOD)
         self.assertIn('plan.method_version', core_completeness(result)['missing_core'])
 
-    def test_public_cache_is_mandatory_and_positive(self):
+    def test_public_cache_is_optional_but_observed_numbers_must_be_positive_finite(self):
         valid = community_data.project_result(stable_result(), 'https://x.com/fixture_user')
         for bad in (None, 0, -1, math.nan, math.inf):
             payload = copy.deepcopy(valid)
             payload['cases'][0]['cache']['post_cache_mb_s'] = bad
-            with self.assertRaises(community_data.CommunityError):
+            with self.subTest(bad=bad), self.assertRaises(community_data.CommunityError):
                 community_data.validate_payload(payload)
         payload = copy.deepcopy(valid)
         payload['cases'][0]['cache'] = None
-        with self.assertRaises(community_data.CommunityError):
-            community_data.require_full_report(payload)
+        community_data.require_report_data(payload)
+        # Publication's core-data contract does not relax full-v2's sampling criterion.
+        incomplete = stable_result(); incomplete['cases'][0]['series'] = []
+        self.assertFalse(core_completeness(incomplete)['complete'])
 
     def test_incomplete_report_does_not_trust_complete_flag(self):
         result = community_result()

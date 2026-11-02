@@ -10,7 +10,7 @@ import subprocess
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"scripts"))
 from test_community import local_result, state_dir, ID
 from test_community_network import receipt
-from community_data import POLICY, project_result, CommunityError
+from community_data import POLICY, project_result, CommunityError, digest
 from community_store import CommunityStore
 from community_comparison import build_comparison, read_comparison
 from community_report import render_comparison, report_messages
@@ -65,7 +65,8 @@ class ReportTests(unittest.TestCase):
             self.assertNotIn(private,a); self.assertNotIn(private,b)
         for source in (a,b):
             self.assertNotIn("<script src=",source); self.assertNotIn("<iframe",source); self.assertNotIn("fetch(",source)
-        self.assertIn("https://x.com/fixture_user",b); self.assertIn("速率高100.00%",b)
+        self.assertIn("https://x.com/fixture_user",b); self.assertNotIn("速率高100.00%",b)
+        self.assertIn("缺少必需条件", b)
         self.assertIn("历史快照",b); self.assertIn("不是独立设备",b)
     def test_usage_survives_offline_samples_comparisons_and_both_local_reports(self):
         from agent_usage import agent_usage
@@ -204,6 +205,44 @@ class ReportTests(unittest.TestCase):
             p.write_text(json.dumps(selected))
             with self.assertRaisesRegex(ValueError,"placeholders"):
                 report_messages("fr",p)
+
+    def test_legacy_private_snapshot_keeps_original_hash_and_redacts_all_report_languages(self):
+        from test_community_assessment import assessed_result
+        from community_report import validate_context
+        result = assessed_result(); result.pop("user_input", None)
+        result["measurement_quality"] = {"status": "interference_observed"}
+        result["target"]["negotiated_bps"] = 10_000_000_000
+        payload = project_result(result, "https://x.com/fixture_user", submission_id=ID)
+        payload["quality"] = {"status": "quiet_observed"}  # Frozen metadata, never replaced by later observation.
+        payload["device_identity"] = {"version": 1, "fingerprint": "c" * 64, "source": "smartctl:serial_number", "attachment": "external"}
+        self.store.close(); self.store = CommunityStore(state_dir())
+        self.store.create(payload, result["run_id"], "fixture-only-legacy")
+        self.result = result; self.local = self.store.payload(ID)
+        self.assertTrue(self.local["assessment"]["references"])
+        expected = digest(self.local); original = copy.deepcopy(result)
+        facts = self.facts()
+        self.assertEqual(facts["content_sha256"], expected)
+        self.assertEqual(facts["local"]["assessment"]["references"], [])
+        self.assertEqual(facts["local"]["assessment"]["specs"], self.local["assessment"]["specs"])
+        self.assertEqual(facts["local"]["assessment"].get("capabilities"), self.local["assessment"].get("capabilities"))
+        for language in ("en", "zh-CN", "ar"):
+            with self.subTest(language=language), tempfile.TemporaryDirectory() as directory:
+                output = render_comparison(facts, result, directory, language, messages(language))
+                document = Path(output["comparison_html"]).read_text()
+                text = report_messages(language)
+                for private in (text["measurement_quality"], text["value_quiet_observed"], text["value_interference_observed"], text["confounders"],
+                                "measurement_quality", "device_identity", payload["device_identity"]["fingerprint"]):
+                    self.assertNotIn(private, document)
+                self.assertIn(text["unknown_condition"], document)
+        self.assertEqual(self.store.payload(ID), self.local)
+        self.assertEqual(digest(self.store.payload(ID)), expected)
+        self.assertEqual(result, original)
+        bad = copy.deepcopy(result); bad["cases"][0]["metrics"]["read"]["mb_s"] *= 2
+        with self.assertRaisesRegex(CommunityError, "integrity_mismatch"):
+            validate_context(facts, bad)
+        bad_facts = copy.deepcopy(facts); bad_facts["local"]["cases"][0]["read"]["mb_s"] *= 2
+        with self.assertRaisesRegex(CommunityError, "integrity_mismatch"):
+            validate_context(bad_facts, result)
 
     def test_evaluation_stdin_binds_run_without_json_cache_or_original_mutation(self):
         evaluation = {"run_id": self.result["run_id"], "language": "zh-CN", "sections": [

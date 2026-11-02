@@ -6,14 +6,14 @@ import statistics
 import unicodedata
 import uuid
 
-from community_data import CommunityError, digest, normalise_payload, project_result
+from community_data import CommunityError, digest, normalise_payload, project_result, without_private_metadata
 from agent_usage import agent_usage
 from community_store import _now, _value
 
 METRICS = ("mb_s", "iops", "mean", "p50", "p95", "p99")
 LIMITATIONS = ("User submitted; not independently verified.",
                "Counts are public records, not independent devices or users.",
-               "Temperature, firmware, background load and previous writes are not controlled.",
+               "Temperature, firmware and previous writes are not controlled.",
                "This is a historical reference snapshot; current public eligibility may change.",
                "A performance difference alone cannot establish product quality or authenticity.")
 CONDITIONS = (("scope", "storage.scope", "TEXT"), ("capacity_bytes", "storage.capacity_bytes", "INTEGER"),
@@ -120,7 +120,7 @@ def _conditions(local, sample):
     if local["tool"]["method_version"] != sample["tool"]["method_version"]:
         differences.append("method_version")
     if any(payload.get("quality", {}).get("status") != "quiet_observed" for payload in (local, sample)):
-        differences.append("measurement_quality")
+        differences.append("unknown_condition")
     if local["plan"]["profile"] in ("mapping", "integrity"):
         differences.append("diagnostic_profile_background_only")
     if not any(_model(local["hardware"][kind]["model"]) is not None and
@@ -150,6 +150,15 @@ def build_comparison(store, result, submission_id):
         row = store._report(submission_id)
         local = store.payload(submission_id)
         projected = normalise_payload(project_result(result, local["attribution"]["profile_url"], local["attribution"]["intro"], submission_id=submission_id))
+        # Only reconstruct the private historical digest. New submissions never
+        # acquire old observation metadata through this compatibility path.
+        if "quality" in local:
+            projected["quality"] = local["quality"]
+            from community_assessment import condition_digest
+            for reference in projected.get("assessment", {}).get("references", []):
+                reference["context_sha256"] = condition_digest(projected, reference["metric"])
+        if result.get("run_id") == row["run_id"] and "device_identity" in local and "device_identity" not in projected:
+            projected["device_identity"] = local["device_identity"]
         if result["run_id"] != row["run_id"] or digest(projected) != row["expected_hash"]:
             raise CommunityError("integrity_mismatch")
         receipt = store.db.execute("SELECT * FROM receipts WHERE report_id=?", (submission_id,)).fetchone()
@@ -210,7 +219,7 @@ def read_comparison(store, comparison_id):
         if digest(local) != row["content_sha256"]:
             raise CommunityError("integrity_mismatch")
         context_complete = True
-        budget_recheck = set()
+        condition_recheck = set()
         groups = {}
         for metric in store.db.execute("SELECT * FROM comparison_metrics WHERE comparison_id=? ORDER BY case_index,direction,metric", (comparison_id,)):
             key = metric["case_index"], metric["direction"]
@@ -221,19 +230,24 @@ def read_comparison(store, comparison_id):
             item = {key: source[key] for key in ("sample_id", "sample_case", "url", "tested_on", "computer_model", "controller_model", "drive_model")}
             item["comparable"] = bool(source["comparable"]); item["verification"] = "unverified"
             item["agent_usage"] = agent_usage(source["url"])
-            item["differences"] = [r[0] for r in store.db.execute("SELECT field FROM comparison_differences WHERE comparison_id=? AND case_index=? AND direction=? AND sample_id=? ORDER BY field", keys)]
+            item["differences"] = list(dict.fromkeys(
+                "unknown_condition" if r[0] == "measurement_quality" else r[0]
+                for r in store.db.execute("SELECT field FROM comparison_differences WHERE comparison_id=? AND case_index=? AND direction=? AND sample_id=? ORDER BY field", keys)))
             item["values"] = {r[0]: r[1] for r in store.db.execute("SELECT metric,value FROM comparison_values WHERE comparison_id=? AND case_index=? AND direction=? AND sample_id=?", keys)}
             context = store.db.execute("SELECT * FROM comparison_source_context WHERE comparison_id=? AND case_index=? AND direction=? AND sample_id=?", keys).fetchone()
             item["conditions"] = {name: context[name] for name,_,_ in CONDITIONS} if context else None
-            if context and context["measurement_quality"] is not None:
-                item["conditions"]["measurement_quality"] = context["measurement_quality"]
             item["workload"] = {name: context["case_"+name] for name,_ in WORKLOAD} if context else None
             item["matched_on"] = [kind for kind in ("computer", "controller", "drive")
                 if _model(local["hardware"][kind]["model"]) is not None and
                 _model(local["hardware"][kind]["model"]) == _model(source[kind+"_model"])]
             if context is None:
                 context_complete = False
-            else:
+            if context is None or local.get("quality", {}).get("status") != "quiet_observed" or context["measurement_quality"] != "quiet_observed":
+                item["comparable"] = False
+                if "unknown_condition" not in item["differences"]:
+                    item["differences"].append("unknown_condition")
+                condition_recheck.add((source["case_index"], source["direction"]))
+            if context is not None:
                 local_budget = _write_budget(local["plan"].get("write_budget_bytes"))
                 source_budget = _write_budget(context["write_budget_bytes"])
                 reason = ("unknown_write_budget_bytes" if local_budget is None or source_budget is None
@@ -243,11 +257,11 @@ def read_comparison(store, comparison_id):
                     if reason not in item["differences"]:
                         item["differences"].append(reason)
                     item["conditions"]["write_budget_bytes"] = source_budget
-                    budget_recheck.add((source["case_index"], source["direction"]))
+                    condition_recheck.add((source["case_index"], source["direction"]))
             groups[(source["case_index"], source["direction"])]["references"].append(item)
         # Recompute only the presentation of affected historical groups, using
         # their own frozen values. Never rewrite old facts or borrow new samples.
-        for key in budget_recheck:
+        for key in condition_recheck:
             group = groups[key]
             for metric in group["metrics"]:
                 values = [ref["values"][metric["metric"]] for ref in group["references"]
@@ -255,9 +269,11 @@ def read_comparison(store, comparison_id):
                 metric.update(_statistics(metric["local_value"], values))
         for group in groups.values():
             group["metrics"].sort(key=lambda item: METRICS.index(item["metric"]))
+        public_local = without_private_metadata(local)
         return {"comparison_id": comparison_id, "submission_id": row["report_id"], "run_id": row["run_id"], "content_sha256": row["content_sha256"],
+            "source_projection_sha256": digest(public_local),
             "sample_count": row["sample_count"], "sample_as_of": row["as_of"], "samples_fetched_at": row["fetched_at"], "dataset_revision": row["dataset_revision"],
-            "created_at": row["created_at"], "local": local, "context_complete": context_complete,
+            "created_at": row["created_at"], "local": public_local, "context_complete": context_complete,
             "groups": list(groups.values()), "limitations": list(LIMITATIONS)}
 
 

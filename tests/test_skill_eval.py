@@ -1,5 +1,6 @@
 """Evaluation guards execute only inert fixtures; never real product operations."""
 import copy
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -20,6 +21,15 @@ def decision(*actions):
 
 def action(tool, **args):
     return dict(tool=tool, args=args)
+
+
+def publication_facts(**changes):
+    facts = dict(result_id='new-run', required_fields_complete=True, preview_id='new-preview',
+                 payload_sha256='b' * 64, privacy_version='2026-11-03-v3')
+    facts.update(changes)
+    facts['share_authorization'] = dict(confirmed=True, **{key: facts[key] for key in
+        ('result_id', 'preview_id', 'payload_sha256', 'privacy_version')})
+    return facts
 
 
 class SkillEvaluationTests(unittest.TestCase):
@@ -56,13 +66,62 @@ class SkillEvaluationTests(unittest.TestCase):
             args=dict(target='/fixture/disk',plan_id='p1',write_bytes=100);args.update(changes)
             self.assertFalse(tools.execute(action('run_capacity',**args))['allowed'])
 
-    def test_upload_still_requires_complete_quiet_exact_consented_result(self):
-        facts=dict(result_id='x',share_authorized=True,result_complete=True,quality='quiet_observed')
-        self.assertTrue(MockTools(facts).execute(action('publish',result_id='x'))['allowed'])
-        for key, value in (('share_authorized',False),('result_complete',False),('quality','visibility_limited')):
-            altered=dict(facts);altered[key]=value
-            self.assertFalse(MockTools(altered).execute(action('publish',result_id='x'))['allowed'])
-        self.assertFalse(MockTools(facts).execute(action('publish',result_id='other'))['allowed'])
+    def test_submission_uses_required_data_not_method_completion_cache_or_background(self):
+        for method in ('drivespeed-quick-v2', 'drivespeed-auto-full-v2'):
+            for quality in ('quiet_observed', 'visibility_limited', 'interference_observed', None):
+                with self.subTest(method=method, quality=quality):
+                    facts = publication_facts(method=method, result_complete=False, quality=quality,
+                                              cache_status='not_observed')
+                    tools = MockTools(facts)
+                    self.assertTrue(tools.execute(action('invite_share'))['allowed'])
+                    self.assertTrue(tools.execute(action('prepare_share', result_id='new-run'))['allowed'])
+                    sent = tools.execute(action('publish', result_id='new-run', preview_id='new-preview'))
+                    self.assertTrue(sent['allowed'])
+                    self.assertNotIn('quality', sent['response'])
+        for complete in (False, None):
+            facts = publication_facts(required_fields_complete=complete, method='full', result_complete=True)
+            for tool in ('invite_share', 'prepare_share', 'publish'):
+                self.assertFalse(MockTools(facts).execute(action(tool, result_id='new-run', preview_id='new-preview'))['allowed'])
+
+    def test_preparation_does_not_confer_consent_to_publish_current_frozen_preview(self):
+        facts = publication_facts()
+        facts.pop('share_authorization')
+        self.assertTrue(MockTools(facts).execute(action('prepare_share', result_id='new-run'))['allowed'])
+        self.assertFalse(MockTools(facts).execute(action('publish', result_id='new-run', preview_id='new-preview'))['allowed'])
+        for field in ('result_id', 'preview_id', 'payload_sha256', 'privacy_version'):
+            facts = publication_facts()
+            facts['share_authorization'][field] = 'old-value'
+            self.assertFalse(MockTools(facts).execute(action('publish', result_id='new-run', preview_id='new-preview'))['allowed'])
+        facts = publication_facts()
+        self.assertFalse(MockTools(facts).execute(action('publish', result_id='other', preview_id='new-preview'))['allowed'])
+        self.assertFalse(MockTools(facts).execute(action('publish', result_id='new-run', preview_id='old-preview'))['allowed'])
+
+    def test_same_numeric_oauth_user_replaces_with_new_snapshot_and_pending_review(self):
+        facts = publication_facts(same_device_key=True, oauth_x_id='1111111', existing_oauth_x_id='1111111',
+                                  submission_id='new-uuid', previous_submission_id='old-uuid',
+                                  previous_payload_sha256='a' * 64, previous_visibility='public')
+        response = MockTools(facts).execute(action('publish', result_id='new-run', preview_id='new-preview'))
+        self.assertTrue(response['allowed'])
+        self.assertEqual(response['response'], dict(simulated=True, replaced=True, visibility='pending'))
+        for key in ('submission_id', 'payload_sha256'):
+            changed = copy.deepcopy(facts)
+            changed[key] = facts['previous_submission_id' if key == 'submission_id' else 'previous_payload_sha256']
+            if key == 'payload_sha256':
+                changed['share_authorization'][key] = changed[key]
+            self.assertFalse(MockTools(changed).execute(action('publish', result_id='new-run', preview_id='new-preview'))['allowed'])
+
+    def test_another_oauth_user_gets_private_conflict_without_client_identity_override(self):
+        facts = publication_facts(same_device_key=True, oauth_x_id='2222222', existing_oauth_x_id='1111111')
+        result = MockTools(facts).execute(action('publish', result_id='new-run', preview_id='new-preview', x_id='1111111'))
+        self.assertTrue(result['allowed'])  # The authorized request receives a simulated server rejection.
+        self.assertEqual(result['response'], dict(simulated=True, status=409, code='device_conflict'))
+        self.assertNotIn('1111111', json.dumps(result['response']))
+        self.assertNotIn('2222222', json.dumps(result['response']))
+        self.assertNotIn('device_identity', result['response'])
+
+    def test_historical_missing_identity_cannot_be_replaced_by_model_and_size(self):
+        facts = publication_facts(required_fields_complete=False, model='Same SSD', capacity=2**40)
+        self.assertFalse(MockTools(facts).execute(action('prepare_share', result_id='new-run'))['allowed'])
 
     def test_declined_unknown_and_repeated_installation_invitations_fail(self):
         for facts in (dict(install_state='declined'),dict(install_state='unknown'),
@@ -117,6 +176,21 @@ class SkillEvaluationTests(unittest.TestCase):
         self.assertIn('publication_semantics_unreviewed',score(sample,decision())['errors'])
         observation['publication_status']='not_public'
         self.assertTrue(score(sample,decision(),observation=observation)['passed'])
+
+    def test_submission_dialogue_and_identity_semantics_need_independent_observation(self):
+        sample = case()
+        sample['expected'].update(quality_context_in_reply=True, private_identity_disclosed=False,
+                                  historical_evidence_backfilled=False)
+        self.assertIn('semantic_unreviewed:quality_context_in_reply', score(sample, decision())['errors'])
+        observation = dict(installation_invited=False, question_count=0, quality_context_in_reply=True,
+                           private_identity_disclosed=False, historical_evidence_backfilled=False)
+        self.assertTrue(score(sample, decision(), observation=observation)['passed'])
+        observation['historical_evidence_backfilled'] = True
+        self.assertIn('wrong_semantics:historical_evidence_backfilled', score(sample, decision(), observation=observation)['errors'])
+        rows = [dict(case_id='fixture', arm='workflow', decision=decision())]
+        observation.update(case_id='fixture', arm='workflow', quality_context_in_reply='yes')
+        with self.assertRaises(ValueError):
+            evaluate([sample], rows, observations=[observation])
 
     def test_malformed_paired_model_response_stays_a_reported_failure(self):
         sample=case('rec');sample['group']='recommendation'

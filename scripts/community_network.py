@@ -11,13 +11,13 @@ import time
 import uuid
 from urllib.parse import urlsplit
 
-from community_data import CommunityError, POLICY, parse_json, validate_payload, transport, require_full_report, require_publication_quality
+from community_data import CommunityError, POLICY, parse_json, validate_payload, transport, require_report_data, require_publication_identity
 from agent_usage import matches_agent_usage
 
 CONTACT = "https://x.com/slime5409"
 TOKEN = re.compile(r"[A-Za-z0-9_-]{43}")
 RESPONSE_LIMIT = 8 * 1024 * 1024
-REASONS = {None, "withdrawn", "account_restricted", "confirmed_false", "x_profile_changed", "pending_review" , "awaiting_review", "incomplete_report"}
+REASONS = {None, "withdrawn", "account_restricted", "confirmed_false", "x_profile_changed", "pending_review" , "awaiting_review", "incomplete_report", "superseded"}
 DIFFERENCES = {"scope", "capacity_bytes", "connection", "negotiated_bps", "filesystem", "free_percent", "os", "os_version",
                "ioengine", "direct", "profile", "file_bytes", "write_budget_bytes", "unknown_write_budget_bytes",
                "seconds", "sustained_seconds", "workload", "unknown_condition", "method_version", "measurement_quality"}
@@ -25,7 +25,7 @@ REMOTE_CODES = {"not_found", "forbidden", "invalid_token", "missing_token", "con
                 "validation_failed", "rate_limited", "quota_exceeded", "flow_budget", "unavailable", "internal_error",
                 "auth_expired", "auth_incomplete", "auth_declined", "account_mismatch", "invalid_ticket", "intake_paused",
                 "payload_too_large", "unsupported_media_type", "bad_request", "capacity_exceeded", "account_quota", "intake_closed",
-                "x_scope_mismatch", "x_unavailable", "preview_mismatch", "integrity_mismatch", "no_measurements", "flow_already_started", "method_not_allowed"}
+                "x_scope_mismatch", "x_unavailable", "preview_mismatch", "integrity_mismatch", "no_measurements", "flow_already_started", "method_not_allowed", "device_conflict"}
 
 
 class NetworkError(CommunityError):
@@ -292,8 +292,8 @@ class CommunityClient:
                     # consent merely because its private receipt disappeared.
                     raise
             payload, consent = self.store.require_consent(submission_id)
-            require_full_report(payload)
-            require_publication_quality(payload)
+            require_report_data(payload)
+            require_publication_identity(payload)
             consent_id = self.store._report(submission_id)["consent_id"]
             flow = self._call("POST", "/api/v1/auth/flows", {"submission_id": submission_id, "content_sha256": checksum,
                 "management_token_sha256": hashlib.sha256(token.encode()).hexdigest(), "profile_url": payload["attribution"]["profile_url"],

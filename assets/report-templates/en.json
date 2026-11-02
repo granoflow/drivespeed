@@ -1,0 +1,64 @@
+{
+  "language": "en",
+  "copy": {
+    "summary": "{measurement_summary}. {report_scope}.",
+    "sections": {
+      "bottleneck": {
+        "title": "What the measurements show",
+        "paragraphs": [
+          "{verified_measurements}. {supported_constraint}."
+        ]
+      },
+      "upgrades": {
+        "title": "Would an upgrade help?",
+        "paragraphs": [
+          "{supported_upgrade_judgment}. {verified_compatible_option}."
+        ]
+      },
+      "anomalies": {
+        "title": "Observed device behaviour",
+        "paragraphs": [
+          "{observed_anomalies}. {verified_cause}."
+        ]
+      }
+    },
+    "partial": "{measured_summary}.",
+    "quick": "Sequential read {read_speed}, write {write_speed}; 4 KiB QD1 random read {random_read_speed}, write {random_write_speed}.",
+    "cache_unconfirmed": "{measured_sustained_speed}"
+  },
+  "evidence": {
+    "health_title": "Drive information and SMART status",
+    "reviews_title": "Published review sources",
+    "conditions": "Test conditions",
+    "results": "Original measurements",
+    "comparison": "Relation to this test",
+    "checked_at": "Checked",
+    "fields": {
+      "model": "Firmware-reported model",
+      "firmware": "Firmware version",
+      "capacity": "Firmware-reported capacity",
+      "protocol": "Drive protocol",
+      "health": "Overall SMART status",
+      "temperature": "Temperature",
+      "spare": "Available spare",
+      "wear": "Percentage used",
+      "power_on": "Power-on time",
+      "power_cycles": "Power cycles",
+      "unsafe_shutdowns": "Unsafe shutdowns",
+      "media_errors": "Media and data integrity errors",
+      "error_log": "Error log entries",
+      "host_reads": "Total host reads",
+      "host_writes": "Total host writes",
+      "cache": "Cache information"
+    },
+    "deep_decisions": {
+      "not_recommended": "No deeper test is recommended for now",
+      "recommended": "A deeper test is recommended",
+      "uncertain": "More evidence is needed before recommending a deeper test"
+    },
+    "interface": "Interface",
+    "controller": "Enclosure controller",
+    "tool": "Test tool",
+    "view_review": "Read original review"
+  }
+}

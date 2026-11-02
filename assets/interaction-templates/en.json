@@ -1,0 +1,21 @@
+{
+  "language": "en",
+  "templates": {
+    "disk_selection": "Which disk would you like to test? {disk_choices}",
+    "quick_start": "I’ll measure small-working-set sequential and 4 KiB QD1 random reads and writes on {disk_name}. The temporary file uses {file_size}, this run writes at most {write_limit}, and the total timeout is {timeout_description}.",
+    "quick_result": "Quick results for {disk_name}: sequential read {read_speed}, write {write_speed}; 4 KiB QD1 random read {random_read_speed}, write {random_write_speed}. These small-working-set measurements do not confirm sustained post-cache performance. Report: {report_link}",
+    "deep_invitation": "Would you like a more thorough test? It will use a {file_size} temporary file, write at most {write_limit} in this run, and keep at least {reserve_space} free. {timeout_notice}",
+    "total_timeout_notice": "This test may take a long time, and its duration is difficult to estimate precisely. We have set the total test timeout to {timeout_minutes} minutes. If that limit is reached, measurements will stop automatically and a report will be generated from the data collected so far.",
+    "partial_result": "The test partially completed: {measured_summary}. {stop_reason}; {missing_measurements} remain unmeasured. A report has been generated from the available data: {report_link}",
+    "capacity_invitation": "Would you like to check the capacity and read/write integrity of the available space? This check will cover {check_range}, write an additional {write_limit}, and leave {reserve_space} free. {duration_description}. A drive with falsified capacity may corrupt existing data when written to, so back up important files first. Passing confirms consistency only within the tested file range; it does not prove the entire drive is defect-free or authenticate its brand.",
+    "share_invitation": "Would you like to make these measurements public for others to reference? {public_data_preview}. You can also include a verified link to your own X account. Only the preview you approve will be submitted; {privacy_summary}.",
+    "cleanup_summary": "{cleanup_result}. {space_retention_note}",
+    "skill_invitation": "If measuring your own disk would help, you can optionally install the DriveSpeed Skill: {skill_url}. Voluntarily shared measurements add citable evidence for other users and for later retrieval and comparison by models and agents. This does not mean a model automatically learns or updates its parameters, and it does not guarantee more accurate answers.",
+    "deep_not_recommended": "I recommend stopping here for now. {evidence_and_reason}. These results already address {answered_goal}; long writes would add little toward that goal. {remaining_unknowns}. A separate test would be useful if you later need {specific_followup_goal}.",
+    "deep_recommended": "I recommend a deeper test to investigate {unresolved_question}. {expected_additional_evidence}.",
+    "smart_context": "SMART data was read at {captured_at}. {capture_scope}. Device identity and SMART values are firmware-reported and may be altered; a passing status does not authenticate the brand or capacity or guarantee reliability.",
+    "review_context": "These are measurements published by other reviewers. Interface, enclosure, capacity, software and workload differences affect comparability and do not establish a fault or falsification.",
+    "privacy_reminder": "Check raw JSON and logs for local paths before sharing them.",
+    "conversion_context": "The copy times in the report are calculated from measured throughput; actual transfers also depend on the other drive and filesystem."
+  }
+}

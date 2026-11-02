@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render trusted measurement numbers into an escaped, offline HTML/PDF report."""
 
-from workloads import AUTO_METHOD, AUTO_METHODS
+from workloads import AUTO_METHOD, AUTO_METHODS, QUICK_METHODS
 import argparse
 import html
 import json
@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from string import Template
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -46,7 +47,7 @@ def controller_identity(hardware, text):
     model = controller.get('model')
     if model:
         return model + (' · ' + text['controller_series'] if controller.get('precision') == 'series' else '')
-    candidates = controller.get('candidates') or []
+    candidates = controller.get('candidates') or hardware.get('enclosure', {}).get('bridge_candidates') or []
     if len(candidates) == 1:
         return str(candidates[0]) + ' · ' + text['controller_candidate']
     return text['device_unknown']
@@ -227,6 +228,10 @@ def render_evaluation(result, language):
         or evaluation.get("language") != language
     ):
         raise ValueError("Evaluation must match this run_id and report language")
+    if evaluation.get("report_policy") == "verified_only":
+        followup = evaluation.get("followup", [])
+        if not isinstance(followup, list) or not all(isinstance(issue, dict) and all(isinstance(issue.get(key), str) and issue[key].strip() for key in ("issue", "reason", "solution", "retest_plan")) for issue in followup):
+            raise ValueError("Follow-up needs issue, reason, solution and a bounded retest plan")
     sections = evaluation.get("sections")
     if not isinstance(sections, list) or len(sections) != 3:
         raise ValueError("Evaluation requires bottleneck, upgrades and anomalies sections")
@@ -234,6 +239,8 @@ def render_evaluation(result, language):
     for section, kind in zip(sections, ("bottleneck", "upgrades", "anomalies")):
         if not isinstance(section, dict) or section.get("kind") != kind:
             raise ValueError("Invalid evaluation section order")
+        if section.get("evidence_status") not in (None, "supported", "needs_followup"):
+            raise ValueError("Invalid evaluation evidence status")
         title, paragraphs = section.get("title"), section.get("paragraphs")
         if not isinstance(title, str) or not title.strip() or not isinstance(paragraphs, list) or not paragraphs or not all(isinstance(p, str) and p.strip() for p in paragraphs):
             raise ValueError("Evaluation needs a title and nonempty text paragraphs")
@@ -250,7 +257,8 @@ def render_evaluation(result, language):
             links.append(f'<a href="{esc(source["url"])}" rel="noreferrer">{esc(source["label"])}</a> ({esc(source["checked_at"])})')
         body = "".join(f"<p>{esc(p)}</p>" for p in paragraphs)
         citations = '<p class="muted">' + " · ".join(links) + "</p>" if links else ""
-        rendered.append(f'<section id="evaluation-{kind}"><h2>{esc(title)}</h2>{body}{citations}</section>')
+        if evaluation.get("report_policy") != "verified_only" or section.get("evidence_status") == "supported":
+            rendered.append(f'<section id="evaluation-{kind}"><h2>{esc(title)}</h2>{body}{citations}</section>')
     return "".join(rendered)
 
 
@@ -595,7 +603,7 @@ def render_references(result, text, assessment):
     )
 
 
-def render_cache_reference(result, assessment, text):
+def render_cache_reference(result, assessment, text, include_followup=None):
     """Expose same-drive source facts beside the measured cache without replacing it."""
     refs = validate_reference_data(result.get("references") or {"items": []})
     normalize = lambda value: "".join(c.lower() for c in (value or "") if c.isalnum())
@@ -623,12 +631,15 @@ def render_cache_reference(result, assessment, text):
     )
     note = esc(text["cache_online_reference"]).format(value=value) + " · " + sources
     note += f" <span>{esc(text['reference_checked'])} {esc(refs.get('checked_at') or text['source_unknown'])}</span>"
-    if result.get("reference_cache", {}).get("status") == "stale":
+    if include_followup is None:
+        include_followup = (result.get("evaluation") or {}).get("report_policy") != "verified_only"
+    if include_followup and result.get("reference_cache", {}).get("status") == "stale":
         note += " · " + esc(text["reference_stale"])
     measured = assessment.get("cache_capacity_estimate_bytes")
     warning = ""
     if (
-        assessment.get("status") == "observed_drop_stable"
+        include_followup
+        and assessment.get("status") == "observed_drop_stable"
         and isinstance(measured, (int, float))
         and not isinstance(measured, bool)
         and math.isfinite(measured)
@@ -663,12 +674,16 @@ def render_readable_results(result, text):
             else esc(text["reference_not_measured"])
         )
 
+    verified_only = result.get("evaluation", {}).get("report_policy") == "verified_only" if isinstance(result.get("evaluation"), dict) else False
     sections = []
     read, write = measured("seq_read", "read"), measured("seq_write", "write")
     if read is not None or write is not None:
-        detail = esc(text["large_file_result"]).format(
+        detail = (esc(text["large_file_result"]).format(
             read=quantity(read, "MB/s"), write=quantity(write, "MB/s")
-        )
+        ) if not verified_only or read is not None and write is not None else
+            " · ".join(esc(text[name]) + ": " + quantity(value, "MB/s")
+                        for name, value in (("seq_read", read), ("seq_write", write))
+                        if value is not None))
         if read is not None and write is not None:
             detail += " " + esc(text["file_time_example"]).format(
                 read_time=quantity(10_000 / read, "s"),
@@ -682,9 +697,12 @@ def render_readable_results(result, text):
         measured("rand_write", "write"),
     )
     if random_read is not None or random_write is not None:
-        detail = esc(text["small_file_result"]).format(
+        detail = (esc(text["small_file_result"]).format(
             read=quantity(random_read, "MB/s"), write=quantity(random_write, "MB/s")
-        )
+        ) if not verified_only or random_read is not None and random_write is not None else
+            " · ".join(esc(text[name]) + ": " + quantity(value, "MB/s")
+                        for name, value in (("rand_read", random_read), ("rand_write", random_write))
+                        if value is not None))
         latency = (
             cases.get("rand_read", {})
             .get("metrics", {})
@@ -720,8 +738,9 @@ def render_readable_results(result, text):
         label = text[name].split(" · ")[0]
         rows.append(
             f'<tr data-comparison="{esc(name)}"><th scope="row">{esc(label)}</th>'
-            f"<td>{quantity(a, 'MB/s')}</td><td>{quantity(b, 'MB/s')}</td>"
-            f"<td><bdi>{number(b / a)}×</bdi></td></tr>"
+            f'<td data-label="{esc(text["single_request"])}">{quantity(a, "MB/s")}</td>'
+            f'<td data-label="{esc(text["queued_requests"])}">{quantity(b, "MB/s")}</td>'
+            f'<td data-label="{esc(text["throughput_ratio"])}"><bdi>{number(b / a)}×</bdi></td></tr>'
         )
     comparison = ""
     if rows:
@@ -741,10 +760,11 @@ def render_readable_results(result, text):
         )
     if not sections and not comparison:
         return ""
+    scenario_note = '<p class="muted">' + esc(text["scenario_limits"]) + "</p>" if not verified_only else ""
     return (
         f'<section id="reading-results"><h2>{esc(text["reading_results"])}</h2>'
         f'<div class="usage-explanation">{"".join(sections)}</div>'
-        f'<p class="muted">{esc(text["scenario_limits"])}</p>{comparison}</section>'
+        f'{scenario_note}{comparison}</section>'
     )
 
 
@@ -755,15 +775,21 @@ def render_capacity_check(result, text):
     from capacity_check import completeness
     passed = check.get("outcome") == "complete" and completeness(check)["complete"]
     cases = {case.get("name"): case for case in check.get("cases", [])}
-    written = cases.get("integrity_write", {}).get("metrics", {}).get("write", {}).get("bytes", 0)
-    planned = check.get("plan", {}).get("file_bytes", 0)
+    written = cases.get("integrity_write", {}).get("metrics", {}).get("write", {}).get("bytes")
+    planned = check.get("plan", {}).get("file_bytes")
+    verified_only = (result.get("evaluation") or {}).get("report_policy") == "verified_only"
     verified = number(planned / 1073741824) if passed else "—"
-    coverage = text["capacity_coverage"].format(planned=number(planned / 1073741824),
-                                              written=number(written / 1073741824), verified=verified)
+    if verified_only and not passed:
+        coverage = " · ".join(text[label] + ": " + number(value) for label, value in (
+            ("file_size", planned), ("actual_write", written)) if value is not None)
+    else:
+        coverage = text["capacity_coverage"].format(planned=number((planned or 0) / 1073741824),
+                                                  written=number((written or 0) / 1073741824), verified=verified)
+    limits = ('<p class="muted">' + esc(text["capacity_limits"]) + '</p>'
+              if not verified_only else '')
     return ('<section id="capacity-check"><h2>' + esc(text["capacity_heading"]) + '</h2><p><strong>'
             + esc(text["capacity_ok"] if passed else text["capacity_not_completed"])
-            + '</strong></p><p>' + esc(coverage) + '</p><p class="muted">'
-            + esc(text["capacity_limits"]) + '</p></section>')
+            + '</strong></p><p>' + esc(coverage) + '</p>' + limits + '</section>')
 
 
 def render_diagnostics(result, text):
@@ -846,6 +872,7 @@ def render_report(result, output, language, text, requested_format="html", compa
         sidecar = Path(output) / 'product-profile.json'
         if any(p.is_symlink() for p in (sidecar, *sidecar.parents)):
             raise ValueError('output_failed')
+    verified_only = result.get("evaluation", {}).get("report_policy") == "verified_only" if isinstance(result.get("evaluation"), dict) else False
     community_html = ""
     if comparison is not None:
         from community_report import validate_context, report_messages, summary_html
@@ -944,10 +971,10 @@ def render_report(result, output, language, text, requested_format="html", compa
                 note=render_cache_reference(result, assessment, text),
             ),
         )
-    show_status = any(case.get("status") != "completed" for case in cases)
-    show_reason = any(case.get("reason") for case in cases)
+    show_status = not verified_only and any(case.get("status") != "completed" for case in cases)
+    show_reason = not verified_only and any(case.get("reason") for case in cases)
     rows = []
-    for case in cases:
+    for case in (completed if verified_only else cases):
         metric = case.get("metrics", {})
         for direction in ("read", "write"):
             m = metric.get(direction, {})
@@ -1042,7 +1069,7 @@ def render_report(result, output, language, text, requested_format="html", compa
         "cache_stable"
         if cache_state == "observed_drop_stable"
         else "cache_no_drop"
-        if cache_state == "no_drop_observed"
+        if cache_state == "no_drop_observed" or assessment.get("curve_diagnostic") == "no_drop_observed"
         else "cache_waiting"
         if cache_state in ("post_drop_incomplete", "post_drop_unstable")
         else "cache_sampling"
@@ -1070,15 +1097,16 @@ def render_report(result, output, language, text, requested_format="html", compa
         cache_metrics.append(
             f'<div class="metric-line"><dt>{esc(text["cache_time"])}</dt><dd>{number(duration)} s</dd></div>'
         )
-    cache_html = f'<div id="cache-assessment" data-status="{esc(cache_state)}"><p class="notice">{esc(text[cache_label])}</p><dl>{"".join(cache_metrics)}</dl></div>'
+    cache_notice = '<p class="notice">' + esc(text[cache_label]) + '</p>' if not verified_only else ''
+    cache_html = f'<div id="cache-assessment" data-status="{esc(cache_state)}">{cache_notice}<dl>{"".join(cache_metrics)}</dl></div>'
     metadata = []
-    quality = result.get("measurement_quality", {}).get("status", "unknown")
-    metadata.append(f'<div class="metric-line metadata-quality"><dt>{esc(text["measurement_quality"])}</dt><dd>{esc(text.get("quality_" + quality, text["quality_unknown"]))}</dd></div>')
     for key, label in [
         ("total_bytes", "capacity"),
         ("free_bytes", "free_space"),
         ("temperature_c", "initial_temp"),
     ]:
+        if verified_only and target.get(key) is None:
+            continue
         metadata.append(
             f'<div class="metric-line"><dt>{esc(text[label])}</dt><dd>{number(target.get(key))}</dd></div>'
         )
@@ -1088,16 +1116,20 @@ def render_report(result, output, language, text, requested_format="html", compa
         for point in case.get("temperatures", [])
         if point.get("celsius") is not None
     ]
-    metadata.append(
-        f'<div class="metric-line"><dt>{esc(text["peak_temp"])}</dt><dd>{number(max(temperatures) if temperatures else None)}</dd></div>'
-    )
-    metadata.append(
-        f'<div class="metric-line"><dt>{esc(text["smart"])}</dt><dd>{esc(target.get("smart") or text["unknown"])}</dd></div>'
-    )
+    if temperatures or not verified_only:
+        metadata.append(
+            f'<div class="metric-line"><dt>{esc(text["peak_temp"])}</dt><dd>{number(max(temperatures) if temperatures else None)}</dd></div>'
+        )
+    if target.get("smart") or not verified_only:
+        metadata.append(
+            f'<div class="metric-line"><dt>{esc(text["smart"])}</dt><dd>{esc(target.get("smart") or text["unknown"])}</dd></div>'
+        )
     for key, label in [
         ("filesystem", "filesystem"),
         ("protocol", "protocol"),
     ]:
+        if verified_only and not target.get(key):
+            continue
         metadata.append(
             f'<div class="metric-line"><dt>{esc(text[label])}</dt><dd>{esc(target.get(key) or text["unknown"])}</dd></div>'
         )
@@ -1110,6 +1142,8 @@ def render_report(result, output, language, text, requested_format="html", compa
         ("actual_write", result.get("actual_write_bytes")),
         ("duration", result.get("elapsed_seconds")),
     ]:
+        if verified_only and value is None:
+            continue
         metadata.append(
             f'<div class="metric-line"><dt>{esc(text[label])}</dt><dd>{number(value)}</dd></div>'
         )
@@ -1119,7 +1153,7 @@ def render_report(result, output, language, text, requested_format="html", compa
                   "architecture": env.get("architecture"), "ioengine": env.get("engine")}
     public_env["fio"] = env.get("fio", {}).get("version") if env.get("fio") else None
     environment_html = "".join(f'<div class="metric-line"><dt>{esc(text[key if key != "fio" else "fio_version"])}</dt><dd>{esc(value or text["unknown"])}</dd></div>'
-        for key,value in public_env.items())
+        for key,value in public_env.items() if value or not verified_only)
     depth_values = [
         ", ".join(
             f"{k}: {v:g}%"
@@ -1134,7 +1168,7 @@ def render_report(result, output, language, text, requested_format="html", compa
         + '</td><td dir="ltr">'
         + esc(value or text["unknown"])
         + "</td></tr>"
-        for c, value in zip(cases, depth_values)
+        for c, value in zip(cases, depth_values) if value or not verified_only
     )
     depth_table = (
         "<table><thead><tr><th>"
@@ -1144,7 +1178,7 @@ def render_report(result, output, language, text, requested_format="html", compa
         + "</th></tr></thead><tbody>"
         + depth_rows
         + "</tbody></table>"
-        if any(depth_values) else f'<p>{esc(text["depth"])}: {esc(text["unknown"])}</p>'
+        if any(depth_values) else '' if verified_only else f'<p>{esc(text["depth"])}: {esc(text["unknown"])}</p>'
     )
     config_head = "".join(
         "<th>" + esc(text[k]) + "</th>"
@@ -1192,6 +1226,8 @@ def render_report(result, output, language, text, requested_format="html", compa
         notes.append(text.get(result["error"].get("key"), text["run_failed"]))
     status = text.get(result.get("outcome"), result.get("outcome", ""))
     report_title = text["title"]
+    if result.get("tool", {}).get("method_version") in QUICK_METHODS:
+        report_title = text["quick_title"]
     if mandatory_cache and not completeness["complete"]:
         report_title = text["incomplete_test_title"]
         status = text["partial"]
@@ -1228,50 +1264,116 @@ def render_report(result, output, language, text, requested_format="html", compa
         if mandatory_cache:
             long_summary_html = '<p class="notice" data-required-cache="incomplete">' + esc(text["required_cache_incomplete"]) + '</p>'
     sustained_html = f'''<section id="sustained"><h2>{esc(text["sustained"])}</h2><p class="muted" id="tail-speed-note">{esc(text["tail_explanation"])}</p><div class="sustained-grid"><div>{chart(series, text)}</div><dl>{"".join(lines)}</dl></div>{cache_html}</section>''' if result.get('plan', {}).get('profile') not in ('mapping', 'integrity') else ''
+    if result.get('plan', {}).get('profile') == 'quick':
+        long_summary_html = sustained_html = ''
+    quick_cards = []
+    for case in result.get('quick_measurement', {}).get('cases', []):
+        quick_direction = 'read' if case.get('name') in ('seq_read', 'rand_read') else 'write'
+        value = case.get('metrics', {}).get(quick_direction, {}).get('mb_s')
+        if value is not None:
+            quick_cards.append(card(text.get(case['name'], case['name']), number(value), 'quick_' + case['name']))
+    quick_history_html = ('<section id="quick-measurement"><h2>' + esc(text['quick_title'])
+                          + '</h2>' + ('' if verified_only else '<p>' + esc(text['quick_notice']) + '</p>') + '<dl class="cards">'
+                          + ''.join(quick_cards) + '</dl></section>') if quick_cards else ''
     drive = hardware.get("drive", {})
     display_model = product_profile["display_name"] if product_profile is not None else drive.get("matching_model") or drive.get("model") or text["unknown"]
     object_line = str(display_model)+" · "+text.get("scope_"+str(target.get("scope")),text["unknown"])
     document_title = str(display_model)+" · "+report_title if product_profile is not None else report_title
-    document = f'''<!doctype html>
-<html lang="{esc(language)}" dir="{direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{esc(document_title)}</title><style>{css}</style></head><body><main>
-<header><div><h1>{esc(report_title)}</h1><p>{esc(object_line)}</p><p class="run-meta"><time datetime="{esc(created)}">{esc(created_display)}</time><span>{esc(status)} · {len(completed)}/{len(cases)}</span></p></div><button type="button" title="{esc(text["print_hint"])}" onclick="window.print()">{esc(text["download"])}</button></header>
-{sampling_notice}
-{sample}
-{('<p class="notice">' + esc(text['core_incomplete']) + '</p>') if completeness.get('complete') is False else ''}
-{('<h2 class="group-title">' + esc(text["short_group"]) + '</h2><p class="group-caption">' + esc(text["short_group_note"]) + '</p><dl class="cards short-cards">' + "".join(short_cards) + '</dl>') if short_cards else ''}
-{long_summary_html}
-{render_diagnostics(result, text)}
-{render_capacity_check(result, text)}
-{render_evaluation(result, language)}
-{render_hardware_assessment(result, text, show_computer_model, product_profile)}
-{render_product_resources(product_profile, text)}
-{render_user_input(result, language, text)}
-{community_html}
-{readable_html}
-<details id="technical-appendix" class="technical-appendix"><summary>{esc(text["technical_appendix"])}</summary>
-{render_peak_comparison(result, text)}
-{reference_html}
-{sustained_html}
-<details id="results"><summary>{esc(text["full_results"])}</summary><dl class="metric-guide">{metric_guide}</dl><div class="table-wrap">{table}</div></details>
-<details id="environment"><summary>{esc(text["environment"])}</summary><dl class="metadata">{"".join(metadata)}{environment_html}</dl>{depth_table}</details>
-<div class="report-ending"><details id="method"><summary>{esc(text["method"])}</summary><p>{esc(text["method_text"])}</p><p>{esc(text["window_method"])}</p><p>{esc(text["sensors_limit"])}</p>{cache_method}<div class="table-wrap">{config_table}</div></details></div></details>
-<p class="print-appendix-note">{esc(text["technical_appendix_note"])}</p>
-<div class="report-closing">{('<aside class="run-notes">' + "".join(f"<p>{esc(n)}</p>" for n in notes) + "</aside>") if notes else ""}
-{agent_usage_html(text=text)}
-<footer><div class="footer-content"><div class="project">{project_html}</div>{promotion_html}</div><p class="privacy">{esc(text["privacy"])} {esc(text["raw"])}</p></footer></div>
-</main><script>
-const collapsedForPrint = [];
-window.addEventListener('beforeprint', () => {{
-  document.querySelectorAll('details:not([open]):not(.technical-appendix):not(.agent-guidance)').forEach(item => {{
-    if (item.closest('.technical-appendix, .agent-usage')) return;
-    collapsedForPrint.push(item);
-    item.open = true;
-  }});
-}});
-window.addEventListener('afterprint', () => {{
-  collapsedForPrint.splice(0).forEach(item => {{ item.open = false; }});
-}});
-</script></body></html>'''
+    from report_evidence import render_evidence, evidence_labels
+    evidence_text = evidence_labels(result, language, ASSETS)
+    device_health_html, online_reviews_html, further_testing_html = render_evidence(result, language, evidence_text)
+    connection_facts = []
+    hardware = result.get('hardware', {})
+    access = external_connection(hardware)
+    if access:
+        connection_facts.append(f'<div><dt>{esc(text["device_external"])}</dt><dd><bdi>{esc(access)}</bdi></dd></div>')
+    for link in hardware.get('links', []):
+        if access and link.get('kind') in ('usb', 'thunderbolt'):
+            continue
+        fact = link_reference(link)
+        if fact and (link.get('state') == 'negotiated' or link.get('kind') == 'pcie' and link.get('state') == 'reported'):
+            label = text['device_internal_segment'] if link.get('kind') == 'pcie' else text['device_connection']
+            connection_facts.append(f'<div><dt>{esc(label)}</dt><dd><bdi>{esc(fact["label"])}</bdi></dd></div>')
+    connection_html = '<dl class="connection-facts">' + ''.join(connection_facts) + '</dl>' if connection_facts else ''
+    reading_links = []
+    for identifier, label, present in (
+        ('short-results', text['short_group'], short_cards),
+        ('reading-results', text['reading_results'], readable_html),
+        ('online-reviews', evidence_text['reviews_title'], online_reviews_html),
+    ):
+        if present:
+            reading_links.append(f'<a href="#{identifier}">{esc(label)}</a>')
+    document_fields = {
+        'language': esc(language),
+        'direction': direction,
+        'document_title': esc(document_title),
+        'css': css,
+        'report_title': esc(report_title),
+        'object_line': esc(object_line),
+        'created': esc(created),
+        'created_display': esc(created_display),
+        'status': esc(status),
+        'completed_count': len(completed),
+        'case_count': len(cases),
+        'print_hint': esc(text['print_hint']),
+        'download': esc(text['download']),
+        'reading_navigation': '<nav class="reading-navigation">' + ''.join(reading_links) + '</nav>' if reading_links else '',
+        'device_health': device_health_html,
+        'online_reviews': online_reviews_html,
+        'further_testing': further_testing_html,
+        'sampling_notice': sampling_notice,
+        'sample': sample,
+        'quick_notice': '<p class="notice">' + esc(text['quick_notice']) + '</p>' if result.get('tool', {}).get('method_version') in QUICK_METHODS else '',
+        'completeness_notice': '<p class="notice">' + esc(text['core_incomplete']) + '</p>' if completeness.get('complete') is False else '',
+        'short_summary': '<div id="short-results"><h2 class="group-title">' + esc(text['short_group']) + '</h2>' + connection_html + '<p class="group-caption">' + esc(text['short_group_note']) + '</p><dl class="cards short-cards">' + ''.join(short_cards) + '</dl></div>' if short_cards else '',
+        'long_summary': long_summary_html,
+        'quick_history': quick_history_html,
+        'diagnostics': render_diagnostics(result, text),
+        'capacity_check': render_capacity_check(result, text),
+        'evaluation': render_evaluation(result, language),
+        'hardware_assessment': render_hardware_assessment(result, text, show_computer_model, product_profile),
+        'product_resources': render_product_resources(product_profile, text),
+        'user_input': render_user_input(result, language, text),
+        'community': community_html,
+        'readable_results': readable_html,
+        'technical_appendix': esc(text['technical_appendix']),
+        'peak_comparison': render_peak_comparison(result, text),
+        'references': reference_html,
+        'sustained': sustained_html,
+        'full_results': esc(text['full_results']),
+        'metric_guide': metric_guide,
+        'results_table': table,
+        'environment': esc(text['environment']),
+        'metadata': ''.join(metadata),
+        'environment_html': environment_html,
+        'depth_table': depth_table,
+        'method': esc(text['method']),
+        'method_text': esc(text['method_text']),
+        'window_method': '<p>' + esc(text['window_method']) + '</p>',
+        'sensors_limit': '<p>' + esc(text['sensors_limit']) + '</p>',
+        'cache_method': cache_method,
+        'configuration_table': config_table,
+        'technical_appendix_note': esc(text['technical_appendix_note']),
+        'run_notes': '<aside class="run-notes">' + ''.join((f'<p>{esc(n)}</p>' for n in notes)) + '</aside>' if notes else '',
+        'agent_usage': agent_usage_html(text=text),
+        'project': project_html,
+        'promotion': promotion_html,
+        'privacy': esc(text['privacy']),
+        'raw_notice': esc(text['raw']),
+    }
+    document_fields['status_line'] = esc(status) + ' · ' + str(len(completed)) + '/' + str(len(cases))
+    if verified_only:
+        document_fields.update(
+            document_title=esc(text['quick_title'] if result.get('tool', {}).get('method_version') in QUICK_METHODS else text['title']),
+            report_title=esc(text['quick_title'] if result.get('tool', {}).get('method_version') in QUICK_METHODS else text['title']),
+            status_line=esc(text['workload']) + ' · ' + str(len(completed)),
+            sampling_notice='', quick_notice='', completeness_notice='', run_notes='',
+            further_testing='', hardware_assessment='', references='',
+            sensors_limit='', window_method='', cache_method='', peak_comparison='', privacy='', raw_notice='',
+        )
+        if assessment.get('status') != 'observed_drop_stable':
+            document_fields.update(long_summary='', sustained='')
+    document = Template((ASSETS / 'report-templates/document.html').read_text(encoding='utf-8')).substitute(document_fields)
     source = output / "report.html"
     if source.is_symlink() or (output / "report.pdf").is_symlink():
         raise ValueError("Report files must not be symlinks")
@@ -1292,6 +1394,52 @@ window.addEventListener('afterprint', () => {{
         pdf=pdf,
         pdf_error=error,
     )
+    if verified_only:
+        artifacts["delivery_followup"] = dict(
+            outcome=result.get("outcome"), completeness=completeness,
+            issues=result.get("evaluation", {}).get("followup", []),
+            withheld_sections=[section for section in result.get("evaluation", {}).get("sections", []) if section.get("evidence_status") != "supported"],
+            collection_notes=[text.get(key, key) for key in result.get("notes", [])],
+            device_context=result.get("evaluation", {}).get("evidence", {}).get("device_health"),
+            reading_context=dict(scenario_limits=text["scenario_limits"], privacy=text["privacy"],
+                                 window_method=text["window_method"], cache_method=text["cache_method"],
+                                 cache_observation=text[cache_label],
+                                 reference_cache=result.get("reference_cache", {}),
+                                 cache_reference_html=render_cache_reference(result, assessment, text, include_followup=True),
+                                 capacity_limits=text["capacity_limits"] if result.get("capacity_check") else None),
+            further_testing=result.get("evaluation", {}).get("evidence", {}).get("further_testing"),
+        )
+        # Follow-up prose can include execution context. It belongs to the
+        # conversation, never to the report's machine-readable receipt.
+        followup = artifacts.pop('delivery_followup')
+        observation = result.get('measurement_quality', {}).get('status')
+        if observation:
+            print(text.get('quality_' + observation, observation), file=sys.stderr)
+        for issue in followup['issues']:
+            print(' · '.join(issue[key] for key in ('issue', 'reason', 'solution', 'retest_plan')), file=sys.stderr)
+        for section in followup['withheld_sections']:
+            print(section['title'] + ': ' + ' '.join(section['paragraphs']), file=sys.stderr)
+        for note in followup['collection_notes']:
+            print(note, file=sys.stderr)
+        if followup['device_context']:
+            print(followup['device_context'].get('scope', ''), file=sys.stderr)
+        context = followup['reading_context']
+        for key in ('cache_method', 'cache_observation', 'capacity_limits'):
+            if context.get(key):
+                print(context[key], file=sys.stderr)
+        if context.get('cache_reference_html'):
+            from html.parser import HTMLParser
+            class ReferenceText(HTMLParser):
+                def handle_data(self, value):
+                    print(value, file=sys.stderr)
+            ReferenceText().feed(context['cache_reference_html'])
+        try:
+            from community_data import project_result, require_publication_identity, CommunityError
+            projected = project_result(result, 'https://x.com/report_preview')
+            require_publication_identity(projected)
+            artifacts['share_recommendation_allowed'] = True
+        except (CommunityError, ValueError, TypeError, KeyError, AttributeError):
+            artifacts['share_recommendation_allowed'] = False
     if comparison is not None:
         from community_report import render_comparison
         artifacts.update(render_comparison(comparison, result, output, language, text, requested_format, community_messages, show_computer_model))

@@ -1,4 +1,4 @@
 interface:
   display_name: "硬盘测速（DriveSpeed）"
-  short_description: "测试本地硬盘表现，生成报告并自愿分享横向比较。"
-  default_prompt: "Use $drivespeed to test my explicitly selected internal or external local drive directory, report in my language, and ask separately whether I want to publish this report."
+  short_description: "测试本地磁盘性能、解读已有结果，研究设备并生成离线报告。"
+  default_prompt: "Use $drivespeed to test my selected disk, report in my language, and use the quick measurements and relevant sources to advise whether deeper testing would help."

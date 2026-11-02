@@ -1,6 +1,6 @@
 """Public report projection and in-memory transport; no network or cache files."""
 
-from workloads import AUTO_METHOD, AUTO_METHODS
+from workloads import AUTO_METHOD, AUTO_METHODS, QUICK_METHODS
 import hashlib
 import json
 import math
@@ -193,10 +193,23 @@ def validate_payload(payload):
         cache = case["cache"]
         if cache and cache["status"] != "observed" and (cache["capacity_estimate_bytes"] is not None or cache["post_cache_mb_s"] is not None):
             _fail(f"cases[{index}].cache")
+        if cache and cache['status'] == 'observed':
+            speed = cache.get('post_cache_mb_s')
+            if type(speed) not in (int, float) or not math.isfinite(speed) or speed <= 0:
+                _fail(f'cases[{index}].cache.post_cache_mb_s')
     if not completed:
         raise CommunityError("no_measurements")
-    if payload["tool"]["method_version"] in AUTO_METHODS:
-        require_full_report(payload)
+    names = [case['name'] for case in payload['cases']]
+    if len(names) != len(set(names)):
+        _fail('cases')
+    if 'device_identity' in payload:
+        from device_identity import validate_device_identity
+        try:
+            validate_device_identity(payload['device_identity'])
+        except ValueError:
+            _fail('device_identity')
+    if payload["tool"]["method_version"] in (*AUTO_METHODS, *QUICK_METHODS):
+        require_report_data(payload)
     return payload
 
 
@@ -213,6 +226,19 @@ def payload_bytes(payload):
 
 def digest(payload):
     return hashlib.sha256(payload_bytes(payload)).hexdigest()
+
+
+def without_private_metadata(payload):
+    """Create a display/export projection after checking the original snapshot."""
+    import copy
+    projected = copy.deepcopy(payload)
+    had_quality = projected.pop('quality', None) is not None
+    projected.pop('device_identity', None)
+    if had_quality and 'assessment' in projected:
+        # Old reference contexts bind the private field. Retain specifications,
+        # but never present those hashes as reproducible from a redacted export.
+        projected['assessment']['references'] = []
+    return projected
 
 
 def transport(payload, expected_digest=None):
@@ -291,45 +317,51 @@ FULL_CASES = {
 }
 
 
-def require_publication_quality(payload):
-    """Gate new publication without invalidating stored historical snapshots."""
-    quality = payload.get("quality")
-    if not isinstance(quality, dict) or quality.get("status") != "quiet_observed":
-        raise CommunityError("measurement_quality", ["quality.status"])
+REPORT_CASES = {name: FULL_CASES[name] for name in ('seq_read', 'seq_write', 'rand_read', 'rand_write')}
+
+
+def require_report_data(payload):
+    """Qualify the data a speed report uses, independently of the test profile."""
+    automatic = payload['tool']['method_version'] in (*AUTO_METHODS, *QUICK_METHODS)
+    cases = {case['name']: case for case in payload['cases']}
+    if len(cases) != len(payload['cases']) or not REPORT_CASES.keys() <= cases.keys():
+        _fail('cases')
+    for name, spec in REPORT_CASES.items():
+        case = cases[name]
+        direction = 'read' if spec[0] in ('read', 'randread') else 'write'
+        item = case[direction]
+        if ((case['rw'], case['bs_bytes'], case['qd']) != spec or case['status'] != 'completed'
+                or case['measurement_seconds'] <= 0 or item['bytes'] <= 0
+                or any(item[key] is None or item[key] <= 0 for key in ('mb_s', 'iops'))):
+            _fail('cases.' + name)
+        if automatic and any(value is None for value in item['latency_us'].values()):
+            _fail('cases.' + name + '.' + direction + '.latency_us')
     return payload
 
 
-def require_full_report(payload):
-    automatic = payload["tool"]["method_version"] in AUTO_METHODS
-    if automatic and payload.get("quality", {}).get("status") not in ("quiet_observed", "interference_observed", "visibility_limited"):
-        _fail("quality")
-    if payload["plan"]["profile"] != "full" or payload["outcome"] != "completed":
-        raise CommunityError("validation_failed", ["plan.profile", "outcome"])
-    cases = payload["cases"]
-    if len(cases) != len(FULL_CASES) or {case["name"] for case in cases} != set(FULL_CASES):
-        raise CommunityError("validation_failed", ["cases"])
-    for case in cases:
-        spec = FULL_CASES[case["name"]]
-        measured = (case["read"]["bytes"] if spec[0] in ("read", "randread") else
-                    case["write"]["bytes"] if spec[0] in ("write", "randwrite") else
-                    case["read"]["bytes"] + case["write"]["bytes"])
-        if ((case["rw"], case["bs_bytes"], case["qd"]) != spec or case["status"] != "completed"
-                or measured <= 0):
-            raise CommunityError("validation_failed", ["cases"])
-        if automatic:
-            directions = ("read", "write") if spec[0] == "randrw" else ("read" if spec[0] in ("read", "randread") else "write",)
-            if case["measurement_seconds"] <= 0:
-                _fail("cases.measurement_seconds")
-            for direction in directions:
-                item = case[direction]
-                if item["bytes"] <= 0 or any(item[k] is None or item[k] <= 0 for k in ("mb_s", "iops")) or any(value is None for value in item["latency_us"].values()):
-                    _fail("cases." + direction)
-    if payload["tool"]["method_version"] == AUTO_METHOD:
-        cache = next(case for case in cases if case["name"] == "sustained").get("cache")
-        speed = cache.get("post_cache_mb_s") if isinstance(cache, dict) else None
-        if (not cache or cache.get("status") != "observed" or type(speed) not in (int, float)
-                or not math.isfinite(speed) or speed <= 0):
-            _fail("cases.sustained.cache")
+# Compatibility for callers reading older private snapshots. The name no longer
+# imposes a full-test requirement; all new code uses the data-based entrypoint.
+require_full_report = require_report_data
+
+
+def require_publication_identity(payload):
+    """Check the private, run-bound identity needed for cross-account de-duplication."""
+    from device_identity import validate_device_identity
+    from interface_types import normalise_interface
+    try:
+        identity = validate_device_identity(payload.get('device_identity'))
+    except ValueError:
+        _fail('device_identity', 'missing_parameters')
+    if payload['storage']['scope'] != 'physical':
+        _fail('storage.scope', 'missing_parameters')
+    interface = normalise_interface(payload['storage']['connection'] or '')
+    if interface['status'] != 'known':
+        _fail('storage.connection', 'missing_parameters')
+    controller = payload['hardware']['controller']['model']
+    controller_key = ' '.join(unicodedata.normalize('NFKC', controller or '').lower().split())
+    internal = identity.get('attachment') == 'internal' and interface['type_id'].startswith(('pcie', 'sata'))
+    if controller_key in ('', 'unknown', '未知', 'unavailable') and not internal:
+        _fail('hardware.controller.model', 'missing_parameters')
     return payload
 
 
@@ -356,17 +388,24 @@ def project_result(result, profile_url, intro="", submission_id=None):
             _fail("hardware.access_interface")
     instant = _timestamp(result.get("created"), "created")
     method = result.get("tool", {}).get("method_version")
-    if method not in ("drivespeed-file-v1", *AUTO_METHODS):
+    if method not in ("drivespeed-file-v1", *AUTO_METHODS, *QUICK_METHODS):
         _fail("tool.method_version", "missing_parameters")
-    automatic = method in AUTO_METHODS
+    automatic = method in (*AUTO_METHODS, *QUICK_METHODS)
     if automatic:
-        from workloads import core_completeness, collection_status
+        from workloads import case_core_missing, collection_status
         try:
-            complete = core_completeness(result)
+            jobs = {job['name']: job for job in plan.get('jobs', [])}
+            by_name = {case['name']: case for case in result['cases']}
+            missing = []
+            for name in REPORT_CASES:
+                if name not in jobs or name not in by_name:
+                    missing.append(name)
+                else:
+                    missing.extend(case_core_missing(by_name[name], jobs[name], plan))
         except (TypeError, KeyError, AttributeError, OverflowError):
             _fail("cases")
-        if not complete["complete"]:
-            raise CommunityError("validation_failed", complete["missing_core"])
+        if missing:
+            raise CommunityError("validation_failed", missing)
     profile = _required(plan, "profile", "plan")
     family = _required(env, "os_family", "environment")
     os_version = _required(env, "os_version", "environment")
@@ -443,16 +482,18 @@ def project_result(result, profile_url, intro="", submission_id=None):
         "hardware": models, "storage": {"scope": _required(target, "scope", "target"), "capacity_bytes": capacity,
             "connection": connection, "negotiated_bps": target.get("negotiated_bps"), "filesystem": target.get("filesystem"), "free_percent": free_percent},
         "environment": {"os": family, "os_version": os_version, "architecture": env.get("architecture"), "ioengine": next(iter(engines)), "direct": True},
-        "plan": {"profile": profile, "file_bytes": plan.get("file_bytes"), "write_budget_bytes": plan.get("write_budget"), "seconds": plan.get("seconds"), "sustained_seconds": plan.get("sustained")},
+        "plan": {"profile": profile, "file_bytes": plan.get("file_bytes"), "write_budget_bytes": plan.get("write_budget"),
+                 "seconds": plan.get("seconds", 0 if method in QUICK_METHODS else None),
+                 "sustained_seconds": plan.get("sustained", 0 if method in QUICK_METHODS else None)},
         "outcome": "completed" if result.get("outcome") == "complete" else result.get("outcome"), "cases": cases,
         "attribution": {"platform": "x", "profile_url": x_profile(profile_url), "intro": intro}, "integrity_notice": dict(POLICY["integrity_notice"])}
-    if automatic or "measurement_quality" in result:
-        payload["quality"] = {"status": result.get("measurement_quality", {}).get("status")}
+    if 'device_identity' in result:
+        payload['device_identity'] = dict(result['device_identity'])
     from community_assessment import project_assessment
     assessment = project_assessment(result, payload)
     if assessment is not None:
         payload['assessment'] = assessment
-    return require_full_report(validate_payload(payload))
+    return require_report_data(validate_payload(payload))
 
 
 def preview(payload):
@@ -460,7 +501,6 @@ def preview(payload):
     validate_payload(payload)
     return {"destination": POLICY["destination"], "tested_on": payload["tested_on"], "tested_at_device": payload["measured_at_device"], "method": payload["tool"], "devices": payload["hardware"],
             **({'assessment': payload['assessment']} if 'assessment' in payload else {}),
-            **({'quality': payload['quality']} if 'quality' in payload else {}),
             "conditions": {"storage": payload["storage"], "environment": payload["environment"], "plan": payload["plan"]},
             "measurements": payload["cases"], "contributor": payload["attribution"],
             "notice": "The report and your X link will be public only after your explicit consent and review. Account control and checksums do not verify the measurements."}

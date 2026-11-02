@@ -1,0 +1,64 @@
+{
+  "language": "zh",
+  "copy": {
+    "summary": "{measurement_summary}。{report_scope}。",
+    "sections": {
+      "bottleneck": {
+        "title": "这次测到了什么",
+        "paragraphs": [
+          "{verified_measurements}。{supported_constraint}。"
+        ]
+      },
+      "upgrades": {
+        "title": "更换设备是否值得",
+        "paragraphs": [
+          "{supported_upgrade_judgment}。{verified_compatible_option}。"
+        ]
+      },
+      "anomalies": {
+        "title": "异常与质量疑点",
+        "paragraphs": [
+          "{observed_anomalies}。{verified_cause}。"
+        ]
+      }
+    },
+    "partial": "{measured_summary}。",
+    "quick": "顺序读取{read_speed}、顺序写入{write_speed}；4 KiB QD1随机读取{random_read_speed}、随机写入{random_write_speed}。",
+    "cache_unconfirmed": "{measured_sustained_speed}"
+  },
+  "evidence": {
+    "health_title": "硬盘信息与 SMART 状态",
+    "reviews_title": "网友评测资料",
+    "conditions": "测试条件",
+    "results": "原文测量结果",
+    "comparison": "与本次测试的关系",
+    "checked_at": "查阅",
+    "fields": {
+      "model": "固件报告型号",
+      "firmware": "固件版本",
+      "capacity": "固件报告容量",
+      "protocol": "硬盘协议",
+      "health": "SMART 总体状态",
+      "temperature": "温度",
+      "spare": "可用备用空间",
+      "wear": "已用寿命比例",
+      "power_on": "累计通电",
+      "power_cycles": "通电次数",
+      "unsafe_shutdowns": "非正常断电",
+      "media_errors": "介质及数据完整性错误",
+      "error_log": "错误日志条目",
+      "host_reads": "累计主机读取",
+      "host_writes": "累计主机写入",
+      "cache": "缓存信息"
+    },
+    "deep_decisions": {
+      "not_recommended": "建议到此为止，无需继续深入测速",
+      "recommended": "建议继续深入测速",
+      "uncertain": "是否深入测速，还缺少判断依据"
+    },
+    "interface": "接口",
+    "controller": "硬盘盒主控",
+    "tool": "测试工具",
+    "view_review": "查看原评测"
+  }
+}

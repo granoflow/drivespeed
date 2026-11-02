@@ -112,7 +112,7 @@ def capacity_plan(target, allowance, source):
             any(type(allowance.get(key)) is not int or not 0 <= allowance[key] <= 2**63 - 1
                 for key in ('run_cap', 'remaining'))):
         raise ValueError('An existing finite signed-integer allowance is required')
-    additional = max(0, size - allowance['remaining'])
+    additional = 0 if allowance.get('mode') == 'single_run' else max(0, size - allowance['remaining'])
     write, read, read_case = _source_rates(source)
     seconds = dict(write=size / (write * 1_000_000), read=size / (read * 1_000_000))
     if any(not math.isfinite(value) or value * 1.8 > MAX_JOB_SECONDS for value in seconds.values()):

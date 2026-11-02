@@ -1,10 +1,11 @@
 """Offline HTML/PDF views of validated typed comparison facts."""
 
 import json
+from string import Template
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from community_data import CONTRACTS, CommunityError, digest, normalise_payload, project_result, x_profile
+from community_data import CONTRACTS, CommunityError, digest, normalise_payload, project_result, x_profile, without_private_metadata
 from agent_usage import agent_usage_html
 
 
@@ -35,8 +36,13 @@ def validate_context(facts, result):
     if not facts.get("context_complete"):
         raise CommunityError("unsupported_comparison_version")
     local = facts["local"]
-    projected = normalise_payload(project_result(result, local["attribution"]["profile_url"], local["attribution"]["intro"], submission_id=facts["submission_id"]))
-    if result.get("run_id") != facts["run_id"] or digest(projected) != facts["content_sha256"] or digest(local) != facts["content_sha256"]:
+    projected = normalise_payload(without_private_metadata(project_result(result, local["attribution"]["profile_url"], local["attribution"]["intro"], submission_id=facts["submission_id"])))
+    source_hash = facts.get("source_projection_sha256")
+    if digest(projected) != source_hash and local.get("assessment", {}).get("references") == [] and "assessment" in projected:
+        # The display projection discards legacy references whose context
+        # included private observation metadata. Specifications remain bound.
+        projected["assessment"]["references"] = []
+    if result.get("run_id") != facts["run_id"] or digest(projected) != source_hash or digest(local) != source_hash:
         raise CommunityError("integrity_mismatch")
 
 
@@ -55,7 +61,6 @@ def _values(local, case):
     return {"scope": local["storage"]["scope"], **local["storage"], "os_family": local["environment"]["os"],
             **{k: local["environment"][k] for k in ("os_version", "architecture", "ioengine")},
             **local["plan"], "method_version": local["tool"]["method_version"],
-            "measurement_quality": local.get("quality", {}).get("status"),
             **{"case_"+key: value for key,value in case.items() if key in ("name", "rw", "bs_bytes", "qd", "numjobs", "runtime_limit_seconds", "rwmixread", "status")}}
 
 
@@ -93,10 +98,10 @@ def _differences(source, local, case, text):
     from report import esc
     a = _values(local, case)
     b = dict(source["conditions"])
-    b.setdefault("measurement_quality", None)
     b.update({"case_"+key: value for key,value in source["workload"].items()})
     rows = []
     for difference in source["differences"]:
+        difference = "unknown_condition" if difference == "measurement_quality" else difference
         field = difference.removeprefix("unknown_")
         field = "os_family" if field == "os" else field
         if difference == "workload_or_measurement":
@@ -145,21 +150,43 @@ def render_comparison(facts, result, output, language, report_text, requested_fo
         sections.append(f'<section class="comparison-group"><h2>{esc(case_label)} · {esc(report_text[group["direction"]])} · {esc(state)}</h2><p>{esc(workload)}</p><div class="table-wrap"><table class="comparison-metrics"><thead><tr><th>{esc(text["metric"])}</th><th>{esc(text["local"])}</th><th>{esc(text["median"])}</th><th>{esc(text["delta"])}</th></tr></thead><tbody>{"".join(rows)}</tbody></table></div><p>{esc(text["threshold"])}</p><h3>{esc(text["sources"])}</h3>{"".join(references) or "<p>"+esc(text["no_sources"])+"</p>"}</section>')
     context = _values(local, {})
     condition_rows = "".join(f'<div class="metric-line"><dt>{esc(text[key])}</dt><dd>{_display(context.get(key),text)}</dd></div>' for key in
-        ("scope", "capacity_bytes", "connection", "negotiated_bps", "filesystem", "free_percent", "os_family", "os_version", "ioengine", "profile", "file_bytes", "write_budget_bytes", "seconds", "sustained_seconds", "method_version", "measurement_quality"))
+        ("scope", "capacity_bytes", "connection", "negotiated_bps", "filesystem", "free_percent", "os_family", "os_version", "ioengine", "profile", "file_bytes", "write_budget_bytes", "seconds", "sustained_seconds", "method_version"))
     model_rows = "".join(f'<div class="metric-line"><dt>{esc(text[kind+"_model"])}</dt><dd>{esc(local["hardware"][kind]["model"] or text["unknown"])}</dd></div>' for kind in (("computer","controller","drive") if show_computer_model else ("controller","drive")))
     css = (Path(__file__).resolve().parents[1]/"assets/report.css").read_text()
-    direction = "rtl" if language.split("-")[0] == "ar" else "ltr"
+    direction = "rtl" if language.replace("_", "-").lower().split("-")[0] in ("ar", "he", "fa", "ur") else "ltr"
     evaluation = render_evaluation(result,language)
     no_sources = ('<p class="comparison-empty">'+esc(text['no_sources'])+'</p><p><a href="report.html">'+esc(text['back'])+'</a></p>') if not facts['sample_count'] else ''
-    document = f'''<!doctype html><html lang="{esc(language)}" dir="{direction}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{esc(text['title'])}</title><style>{css}</style></head><body class="community-report"><main>
-<header><div><h1>{esc(text['title'])}</h1><p class="run-meta">{esc(local['hardware']['drive']['model'] or text['unknown'])} · <time>{esc(local['tested_on'])}</time> · {esc(report_text.get(result.get('outcome'),result.get('outcome','')))}</p></div><button type="button" onclick="window.print()">{esc(report_text['download'])}</button></header>
-{('<p class="notice">'+esc(report_text['sample'])+'</p>') if result.get('synthetic') else ''}
-<section>{summary_html(facts,text)}<p>{esc(text['unverified'])}</p><p>{esc(text['threshold'])}</p>{no_sources}<p><a href="{esc(x_profile(local['attribution']['profile_url']))}" rel="noopener noreferrer">{esc(text['author'])} · X @{esc(local['attribution']['profile_url'].rsplit('/',1)[1])}</a></p></section>
-<section><h2>{esc(text['local_conditions'])}</h2><dl>{model_rows}{condition_rows}</dl></section>{''.join(sections)}
-{evaluation or '<section class="comparison-interpretation"><h2>'+esc(text['interpretation'])+'</h2><p>'+esc(text['no_interpretation'])+'</p></section>'}
-<div class="comparison-ending"><section class="comparison-method"><h2>{esc(text['method'])}</h2><p>{esc(text['formula'])}</p><p>{esc(text['confounders'])}</p><p>{esc(text['historical'])}</p><p>{esc(text['authenticity'])}</p></section>
-{agent_usage_html(text=report_text)}
-<footer><a href="report.html">{esc(text['back'])}</a> · DriveSpeed · <a href="https://anz.tv/" rel="noopener noreferrer">A New Zero</a></footer></div></main></body></html>'''
+    template = (Path(__file__).resolve().parents[1] / "assets/report-templates/comparison.html").read_text(encoding="utf-8")
+    document = Template(template.replace("<p>${confounders}</p>", "")).substitute({
+        'language': esc(language),
+        'direction': direction,
+        'title': esc(text['title']),
+        'css': css,
+        'heading': esc(text['title']),
+        'drive_model': esc(local['hardware']['drive']['model'] or text['unknown']),
+        'tested_on': esc(local['tested_on']),
+        'outcome': esc(report_text.get(result.get('outcome'), result.get('outcome', ''))),
+        'download': esc(report_text['download']),
+        'sample': '<p class="notice">' + esc(report_text['sample']) + '</p>' if result.get('synthetic') else '',
+        'summary': summary_html(facts, text),
+        'unverified': esc(text['unverified']),
+        'threshold': esc(text['threshold']),
+        'no_sources': no_sources,
+        'author_url': esc(x_profile(local['attribution']['profile_url'])),
+        'author_label': esc(text['author']),
+        'author_name': esc(local['attribution']['profile_url'].rsplit('/', 1)[1]),
+        'local_conditions': esc(text['local_conditions']),
+        'models': model_rows,
+        'conditions': condition_rows,
+        'comparison_groups': ''.join(sections),
+        'evaluation': evaluation or '<section class="comparison-interpretation"><h2>' + esc(text['interpretation']) + '</h2><p>' + esc(text['no_interpretation']) + '</p></section>',
+        'method': esc(text['method']),
+        'formula': esc(text['formula']),
+        'historical': esc(text['historical']),
+        'authenticity': esc(text['authenticity']),
+        'agent_usage': agent_usage_html(text=report_text),
+        'back': esc(text['back']),
+    })
     output.mkdir(parents=True, exist_ok=True)
     source, pdf_path = output/"comparison.html", output/"comparison.pdf"
     if source.is_symlink() or pdf_path.is_symlink():

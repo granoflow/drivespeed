@@ -117,6 +117,8 @@ class CapacityFlowTests(unittest.TestCase):
                 root = Path(root)
                 target, source = capacity_fixture(root)
                 source.pop('user_input', None)
+                source['report'] = dict(html='historical-report.html', delivery_followup={
+                    'measurement_quality': {'status': 'visibility_limited', 'private_note': 'OLD-DISK-ACTIVITY'}})
                 original = copy.deepcopy(source)
                 output = root / 'output'
                 ledger = WriteAllowance(root / 'ledger')
@@ -163,6 +165,8 @@ class CapacityFlowTests(unittest.TestCase):
                 child.assert_not_called()
                 self.assertEqual(source, original)
                 combined = json.loads((output/'combined-results.json').read_text())
+                self.assertNotIn('measurement_quality', json.dumps(combined))
+                self.assertNotIn('OLD-DISK-ACTIVITY', json.dumps(combined))
                 self.assertEqual(combined['outcome'], 'complete')
                 self.assertEqual(combined['capacity_check']['tool']['method_version'], 'drivespeed-capacity-v1')
                 document = (output/'combined-report'/'report.html').read_text()

@@ -15,7 +15,7 @@ import sqlite3
 import sys
 import traceback
 
-from community_data import CommunityError, parse_json, preview, project_result, notice_details, require_publication_quality
+from community_data import CommunityError, parse_json, preview, project_result, notice_details, require_publication_identity
 from community_store import CommunityStore
 from community_network import CommunityClient, CommunityHTTP, NetworkError
 from progress import language_default
@@ -156,6 +156,8 @@ def _error_group(code):
         return "version", "unsupported_snapshot_version"
     if code == "content_conflict":
         return "conflict", code
+    if code == 'device_conflict':
+        return 'device_conflict', code
     if code in ("unsupported_language", "invalid_messages"):
         return "language", "unsupported_language"
     if code in ("validation_failed", "invalid_json", "duplicate_key", "invalid_number", "invalid_unicode", "payload_too_large", "no_measurements", "too_deep"):
@@ -165,7 +167,7 @@ def _error_group(code):
 
 def _failure(operation, error, ui, state_attempted=False, cause=None, remote_state="none"):
     group, anchor = _error_group(error.code)
-    if isinstance(error, NetworkError):
+    if isinstance(error, NetworkError) and error.code != 'device_conflict':
         group = "authorization" if error.code.startswith("auth_") or error.code == "account_mismatch" else (
             "http" if error.status is not None and error.status < 500 and error.status != 429 else "network")
         anchor = "network_recovery"
@@ -210,8 +212,19 @@ def main(argv=None):
         if operation in ("prepare", "remember", "compare"):
             source_path, result = read_result(args.input)
             if operation == "prepare":
-                require_publication_quality({"quality": result.get("measurement_quality", {})})
+                if 'device_identity' not in result:
+                    # Identity is a current private publication claim, not a
+                    # replacement for any saved measurement or historical model.
+                    from device_identity import collect_device_identity
+                    from system_io import BenchError
+                    try:
+                        identity = collect_device_identity(result.get('target', {}))
+                    except (BenchError, OSError, ValueError):
+                        identity = None
+                    if identity is not None:
+                        result = {**result, 'device_identity': identity}
                 payload = project_result(result, args.x_profile, args.intro)
+                require_publication_identity(payload)
         state_attempted = True
         with CommunityStore(getattr(args, "state_dir", None)) as store:
             if operation == "prepare":
@@ -228,7 +241,7 @@ def main(argv=None):
                 else:
                     if args.notice_version is None:
                         raise CommunityError("consent_required", ["notice_version"])
-                    require_publication_quality(store.payload(args.submission_id))
+                    require_publication_identity(store.payload(args.submission_id))
                     consent_id = store.consent(args.submission_id, args.notice_version, args.decision)
                     output = {"status": "consented", "submission_id": args.submission_id, "consent_id": consent_id}
             elif operation == "list":

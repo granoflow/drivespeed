@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Run bounded file-based fio tests. Standard library only, Python 3.10+."""
 
-from workloads import AUTO_METHODS
+from workloads import AUTO_METHODS, QUICK_METHODS, quick_plan
 import argparse
 import json
 import os
 import platform
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -51,7 +52,8 @@ from workloads import (
     case_core_missing,
     active_runtime_ms,
 )
-from write_allowance import WriteAllowance, plan_hash
+from write_allowance import RunWriteProtection as WriteAllowance, plan_hash
+from run_deadline import RunDeadline
 
 
 def parser():
@@ -59,7 +61,7 @@ def parser():
     p.add_argument(
         "--target", "--disk",
         required=True,
-        help="Selected mounted disk root (or a writable directory for compatibility); never a raw device",
+        help="An internal or external disk root; never a raw device. Writable mounted directories remain compatible.",
     )
     p.add_argument(
         "--output",
@@ -68,6 +70,9 @@ def parser():
     )
     p.add_argument("--propose-write-bytes", type=int,
                    help="Propose an exact finite normal-test write plan; does not authorize writes without plan confirmation")
+    p.add_argument("--stage", choices=("quick", "full"), default="full",
+                   help="Quick actual sequential measurement, or deeper full test; legacy CLI default is full")
+    p.add_argument("--quick-from", help="Preserve a same-target quick result alongside the deeper test; never rerun it")
     p.add_argument(
         "--language",
         default=language_default(),
@@ -123,16 +128,24 @@ def parser():
 
 def confirm_write(target, config, allowance, text=None):
     digest = plan_hash(target, config, allowance)
+    if config.get("total_timeout_seconds") and config.get("profile") == "full":
+        print((text or messages("en"))["test_timeout_notice"].format(
+            minutes=f'{config["total_timeout_seconds"] / 60:g}'), file=sys.stderr)
     if config.get("method_version") == "drivespeed-capacity-v1":
         print((text or messages("en"))["capacity_warning"], file=sys.stderr)
-    print(json.dumps(dict(target=target["path"], physical_devices=target["physical_devices"],
+    notice = dict(target=target["path"], physical_devices=target["physical_devices"],
                           file_bytes=config["file_bytes"], max_write_bytes=config["max_write_bytes"],
                           reserve_bytes=config["reserve_bytes"], max_runtime_seconds=config["max_runtime_seconds"],
                           remaining_authorized_bytes=allowance["remaining"] if allowance["present"] else None,
                           new_finite_allowance=not allowance["present"],
                           additional_authorized_bytes=config.get("additional_authorized_bytes", 0),
                           capacity_run_cap_bytes=config.get("capacity_run_cap_bytes"),
-                          plan_sha256=digest)), file=sys.stderr)
+                          plan_sha256=digest)
+    if allowance.get("mode") == "single_run":
+        for key in ("remaining_authorized_bytes", "new_finite_allowance", "additional_authorized_bytes", "capacity_run_cap_bytes"):
+            notice.pop(key)
+        notice["write_protection"] = "single_run"
+    print(json.dumps(notice), file=sys.stderr)
     if sys.stdin.isatty():
         answer = input((text or messages("en"))["confirm_write"])
         confirmed = answer == "RUN"
@@ -183,6 +196,9 @@ def check_owned(work, identity, file_identity=None):
 
 
 def run_case(fio, job, config, engine, output, work, target, progress):
+    deadline = getattr(progress, "deadline", None)
+    if deadline is not None:
+        deadline.check()
     raw = output / f"{job['name']}.fio.json-stream"
     log = output / job["name"]
     args = fio_arguments(fio["path"], job, config["file_bytes"], engine, raw, log)
@@ -198,6 +214,8 @@ def run_case(fio, job, config, engine, output, work, target, progress):
     if job.get("idle_seconds"):
         idle_start = time.monotonic()
         while time.monotonic() - idle_start < job["idle_seconds"]:
+            if deadline is not None:
+                deadline.check()
             remaining = job["idle_seconds"] - (time.monotonic() - idle_start)
             check_target(target, config["reserve_bytes"])
             progress.emit(job["name"], percent=0, remaining=remaining + job["runtime"])
@@ -214,6 +232,8 @@ def run_case(fio, job, config, engine, output, work, target, progress):
     )
     check_target(target, config["reserve_bytes"])
     check_owned(work, identity, file_identity)
+    if deadline is not None:
+        deadline.check()
     with (output / f"{job['name']}.stderr.log").open("wb") as stderr:
         proc = subprocess.Popen(
             args,
@@ -224,7 +244,11 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             start_new_session=platform.system() != "Windows",
         )
         try:
+            if deadline is not None:
+                deadline.attach(proc)
             while proc.poll() is None:
+                if deadline is not None:
+                    deadline.check()
                 if time.monotonic() - last_sensor >= 5:
                     sensor = check_target(target, config["reserve_bytes"])
                     case["temperatures"].append(
@@ -309,6 +333,8 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                 else:
                     progress.emit(job["name"])
                 time.sleep(1)
+            if deadline is not None:
+                deadline.check()
             if proc.returncode and not (
                 cache_stop_requested is not None
                 and proc.returncode in (-signal.SIGINT, 128 + signal.SIGINT)
@@ -354,12 +380,14 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             raise
         except (OSError, ValueError, BenchError) as exc:
             case.update(
-                status="failed",
+                status="partial" if getattr(exc, "key", None) == "total_timeout" else "failed",
                 reason=getattr(exc, "key", "run_failed"),
                 detail=str(exc),
             )
         finally:
             stop_process(proc)
+            if deadline is not None:
+                deadline.detach(proc)
             case["elapsed_seconds"] = round(time.monotonic() - start, 3)
             if "metrics" not in case and raw.exists():
                 try:
@@ -374,7 +402,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                     case["series"].extend(bandwidth_series(path, strict=config.get("method_version") in AUTO_METHODS))
                 except (OSError, ValueError) as exc:
                     case["collection_error"] = str(exc)
-            if config.get("method_version") in AUTO_METHODS:
+            if config.get("method_version") in (*AUTO_METHODS, *QUICK_METHODS):
                 case["collection_status"] = collection_status(case)
                 missing = case_core_missing(case, job, config)
                 if missing and case["status"] == "completed":
@@ -385,6 +413,13 @@ def run_case(fio, job, config, engine, output, work, target, progress):
 
 
 def normal_plan(target, allowance, proposed_bytes=None):
+    if allowance.get("mode") == "single_run":
+        amount = 1024 * GIB if proposed_bytes is None else proposed_bytes
+        if type(amount) is not int or not 0 < amount <= 2**63 - 1:
+            raise ValueError("Invalid single-run write limit")
+        config = auto_plan(target["total_bytes"], target["free_bytes"], amount, amount)
+        config.update(total_timeout_seconds=2580, max_runtime_seconds=2580)
+        return config
     if proposed_bytes is None:
         return auto_plan(target["total_bytes"], target["free_bytes"], allowance["run_cap"], allowance["remaining"])
     if type(proposed_bytes) is not int or not 0 < proposed_bytes <= 2**63 - 1:
@@ -395,7 +430,37 @@ def normal_plan(target, allowance, proposed_bytes=None):
     return config
 
 
+def load_quick_source(filename, target):
+    path = Path(filename)
+    limit = 16*1024*1024
+    try:
+        if unsafe_path_component(path) or not stat.S_ISREG(path.lstat().st_mode):
+            raise ValueError("Quick result must be a regular file")
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+                raise ValueError("Invalid quick result file")
+            raw = stream.read(limit+1)
+        if len(raw) > limit:
+            raise ValueError("Quick result exceeds the size limit")
+        source = json.loads(raw)
+        if (not isinstance(source.get("run_id"), str) or not source["run_id"].strip()
+                or source.get("tool", {}).get("method_version") not in QUICK_METHODS
+                or source.get("plan", {}).get("method_version") != source.get("tool", {}).get("method_version")
+                or source.get("outcome") != "complete" or source.get("synthetic")
+                or any(source.get("target", {}).get(key) != target.get(key)
+                       for key in ("path", "st_dev", "inode", "physical_devices"))
+                or not core_completeness(source)["complete"]):
+            raise ValueError("A completed same-target quick measurement is required")
+        return source
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, RecursionError) as exc:
+        raise ValueError("Invalid or unavailable quick result") from exc
+
+
 def execute(args, text, report_text):
+    if args.stage == "quick" and (args.capacity_from or args.propose_write_bytes is not None or args.quick_from):
+        raise ValueError("Quick measurements do not take deeper-test or capacity options")
     if args.capacity_from and args.propose_write_bytes is not None:
         raise ValueError("Capacity checks use their own exact authorization proposal")
     reference_data = (
@@ -408,8 +473,12 @@ def execute(args, text, report_text):
     if args.capacity_from:
         from capacity_check import load_source, capacity_plan
         capacity_source = load_source(args.capacity_from, target)
-    config = (capacity_plan(target, allowance, capacity_source) if capacity_source is not None else
+    config = (quick_plan(target) if args.stage == "quick" else
+              capacity_plan(target, allowance, capacity_source) if capacity_source is not None else
               normal_plan(target, allowance, args.propose_write_bytes))
+    quick_source = None
+    if args.quick_from:
+        quick_source = load_quick_source(args.quick_from, target)
 
     current_hardware = collect_hardware(
         target,
@@ -486,6 +555,10 @@ def execute(args, text, report_text):
         notes=[],
         references=reference_data,
     )
+    if quick_source is not None:
+        result["quick_measurement"] = dict(run_id=quick_source["run_id"],
+                                         target=quick_source["target"], cases=quick_source["cases"],
+                                         note="Earlier quick working set; retained separately, not substituted for deeper workloads")
     labels = (
         ["inspect", "dependency"]
         + [j["name"] for j in config["jobs"]]
@@ -507,6 +580,7 @@ def execute(args, text, report_text):
     error_code = 0
     reserved = False
     attempted = set()
+    deadline = None
     with DeviceLock(target):
         try:
             check_target(target)
@@ -522,13 +596,25 @@ def execute(args, text, report_text):
                 else None,
             )
             progress.emit("dependency", "completed", 100, force=True)
-            result["measurement_quality"] = observe_quality(target)
+            from device_identity import collect_device_identity
+            identity = collect_device_identity(target)
+            if identity is not None:
+                result['device_identity'] = identity
+            observation = observe_quality(target)
+            # Observation is conversation context, not report/JSON data. Do not
+            # persist it or rewrite a saved run using a later idle observation.
+            observation_status = observation['status']
+            print(text.get('quality_' + observation_status, observation_status), file=sys.stderr)
             fresh = check_target(target, config["reserve_bytes"])
             target.update(fresh)
-            config = (capacity_plan(target, allowance, capacity_source) if capacity_source is not None else
+            config = (quick_plan(target) if args.stage == "quick" else
+                      capacity_plan(target, allowance, capacity_source) if capacity_source is not None else
                       normal_plan(target, allowance, args.propose_write_bytes))
             result["plan"] = config
             confirmed = confirm_write(target, config, allowance, text)
+            deadline = RunDeadline(config.get("total_timeout_seconds", config["max_runtime_seconds"]))
+            progress.deadline = deadline
+            result["time_protection"] = dict(seconds=deadline.seconds, scope="all test jobs and waits after confirmation; report generation follows shutdown")
             ledger.reserve(target, config, allowance, run_id, confirmed)
             reserved = True
             result["write_authorization"] = dict(plan_sha256=confirmed, reserved_bytes=config["max_write_bytes"])
@@ -548,6 +634,7 @@ def execute(args, text, report_text):
             finally:
                 os.close(fd)
             for job in config["jobs"]:
+                deadline.check()
                 progress.emit(job["name"], percent=0, force=True)
                 attempted.add(job["name"])
                 try:
@@ -575,6 +662,9 @@ def execute(args, text, report_text):
                 save(output / "results.json", result)
                 if case["status"] != "completed":
                     error_code = 6 if case["status"] == "partial" else 5
+                    if case.get("reason") == "total_timeout":
+                        result["stop_reason"] = "total_timeout"
+                        result["notes"].append("total_timeout")
                     # A valid initialized file still supports the remaining
                     # measurements when only the cache-stability goal is missing.
                     # Preserve partial qualification; never continue after I/O,
@@ -598,6 +688,8 @@ def execute(args, text, report_text):
                 key=getattr(exc, "key", "run_failed"), detail=str(exc)
             )
             result["outcome"] = "partial" if result["cases"] else "failed"
+            if getattr(exc, "key", None) == "total_timeout":
+                result.update(outcome="partial", stop_reason="total_timeout")
             error_code = exc.code if isinstance(exc, BenchError) else 5
             print(
                 text.get(getattr(exc, "key", "run_failed"), text["run_failed"])
@@ -606,6 +698,8 @@ def execute(args, text, report_text):
                 file=sys.stderr,
             )
         finally:
+            if deadline is not None:
+                deadline.close()
             if work:
                 try:
                     if args.keep_test_files or platform.system() == "Windows":
@@ -641,6 +735,7 @@ def execute(args, text, report_text):
                     c.get("status") in ("completed", "skipped", "partial") for c in result["cases"]
                 )
                 and result["outcome"] != "cancelled"
+                and not any(c.get("reason") == "total_timeout" for c in result["cases"])
                 and not unreturned_attempt
                 else None
             )
@@ -675,6 +770,14 @@ def execute(args, text, report_text):
         import copy
         combined = copy.deepcopy(capacity_source)
         combined.pop("_source_sha256", None)
+        historical_observation = combined.pop('measurement_quality', None)
+        combined.pop('quality', None)
+        if isinstance(historical_observation, dict):
+            status = historical_observation.get('status')
+            if status in ('quiet_observed', 'interference_observed', 'visibility_limited'):
+                print(text['quality_' + status], file=sys.stderr)
+        if isinstance(combined.get('report'), dict):
+            combined['report'].pop('delivery_followup', None)
         combined["capacity_check"] = {key: result[key] for key in
                                       ("run_id", "created", "tool", "plan", "cases", "outcome", "completeness")}
         combined["capacity_check"]["speed_source_sha256"] = config["source_sha256"]

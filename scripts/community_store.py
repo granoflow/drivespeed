@@ -191,6 +191,10 @@ class CommunityStore:
             owner_id TEXT REFERENCES reports(id) ON DELETE CASCADE,report_id TEXT,status TEXT NOT NULL
             CHECK(status IN ('quiet_observed','interference_observed','visibility_limited')),
             PRIMARY KEY(owner_id,report_id))""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS device_identities(
+            report_id TEXT PRIMARY KEY REFERENCES reports(id) ON DELETE CASCADE,
+            version INTEGER NOT NULL, fingerprint TEXT NOT NULL, source TEXT NOT NULL,
+            attachment TEXT)""")
         schema(self.db)
         from community_comparison import schema as comparison_schema
         comparison_schema(self.db)
@@ -311,6 +315,11 @@ class CommunityStore:
                 from community_assessment import write
                 write(self.db, identifier, identifier, payload.get('assessment'))
                 write_quality(self.db, identifier, identifier, payload.get("quality"))
+                identity = payload.get('device_identity')
+                if identity is not None:
+                    self.db.execute('INSERT INTO device_identities VALUES(?,?,?,?,?)',
+                                    (identifier, identity['version'], identity['fingerprint'],
+                                     identity['source'], identity.get('attachment')))
         except sqlite3.IntegrityError:
             raise CommunityError("content_conflict") from None
         return identifier
@@ -354,6 +363,11 @@ class CommunityStore:
             quality = read_quality(self.db, identifier, identifier)
             if quality is not None:
                 payload["quality"] = quality
+            identity = self.db.execute('SELECT * FROM device_identities WHERE report_id=?', (identifier,)).fetchone()
+            if identity is not None:
+                payload['device_identity'] = {key: identity[key] for key in ('version', 'fingerprint', 'source')}
+                if identity['attachment'] is not None:
+                    payload['device_identity']['attachment'] = identity['attachment']
         validate_payload(payload)
         if not hmac.compare_digest(digest(payload), row["expected_hash"]):
             raise CommunityError("integrity_mismatch")

@@ -92,7 +92,9 @@ class ReportPrivacyTests(unittest.TestCase):
                     store.db.execute("UPDATE comparison_source_context SET write_budget_bytes=NULL")
                     store.db.commit(); facts = read_comparison(store,selected["comparison_id"])
                 first = facts["groups"][0]["references"][0]
-                self.assertEqual(first["comparable"],difference is None)
+                self.assertFalse(first["comparable"])
+                self.assertIn("unknown_condition", first["differences"])
+                self.assertTrue(all(m["n"] == 0 for g in facts["groups"] for m in g["metrics"]))
                 if difference:
                     self.assertIn(difference,first["differences"])
                     self.assertTrue(all(m["n"] == 0 for g in facts["groups"] for m in g["metrics"]))

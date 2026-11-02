@@ -44,7 +44,8 @@ button:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px soli
 .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0 0 28px; }
 .card { padding: 24px; border: 1px solid #dbe4ee; border-radius: 12px; background: white; }
 dt { font-size: 14px; color: #526579; }
-dd { direction: ltr; margin: 0; font-variant-numeric: tabular-nums; }
+dd { direction: inherit; margin: 0; font-variant-numeric: tabular-nums; }
+.card dd { direction: ltr; }
 .card dd { font-size: clamp(27px, 3.3vw, 39px); font-weight: 650; letter-spacing: -.035em; margin-top: 14px; line-height: 1.2; }
 .card dd.value-long { min-width: 0; overflow-wrap: anywhere; font-size: clamp(17px, 1.5vw, 24px); }
 .card[data-state="not_measured"] dd { font-size: 26px; direction: inherit; }
@@ -171,13 +172,33 @@ footer { margin-top: 32px; color: #526579; font-size: 14px; }
 .usage-explanation h3 { margin: 0 0 10px; font-size: 15px; }
 .usage-explanation p { margin: 0; font-size: 14px; }
 .comparison-table td { text-align: end; }
+.reading-navigation { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: -12px 0 20px; }
+.reading-navigation a { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; }
+.connection-facts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0 0 12px; }
+.connection-facts > div { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; }
+.connection-facts dd { font-size: 14px; }
+html { scroll-padding-top: 16px; }
+::selection { background: #d3e5f5; color: #182b3e; }
 .metric-guide { margin: 20px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 18px 28px; }
 .metric-guide dt { font-weight: 650; color: #182b3e; }
 .metric-guide dd { direction: inherit; font-size: 13px; line-height: 1.65; margin-top: 5px; color: #526579; }
 @media (max-width: 700px) {
   .usage-explanation, .metric-guide { grid-template-columns: 1fr; }
 }
+@media screen and (max-width: 700px) {
+  .table-wrap .comparison-table { min-width: 0; }
+  .comparison-table, .comparison-table tbody { display: block; }
+  .comparison-table thead { display: none; }
+  .comparison-table tr { display: grid; grid-template-columns: minmax(0, 1fr); padding: 14px 0; border-bottom: 1px solid #dbe4ee; }
+  .comparison-table th { padding: 0 0 8px; border: 0; color: #182b3e; font-weight: 650; }
+  .comparison-table td { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border: 0; }
+  .comparison-table td::before { content: attr(data-label); color: #526579; text-align: start; }
+  .comparison-table td bdi { flex-shrink: 0; }
+}
 @media print {
+  .reading-navigation { display: none; }
+  .connection-facts { gap: 8px 20px; margin-bottom: 8px; }
+  .connection-facts dd, .connection-facts dt { font-size: 8pt; }
   .usage-explanation { break-inside: avoid; }
   .usage-explanation h3 { font-size: 9pt; }
   .usage-explanation p, .metric-guide dd { font-size: 8pt; }
@@ -230,7 +251,7 @@ html[dir="rtl"] .cache-reference, html[dir="rtl"] .card .notice { direction: rtl
   body:not(.community-report) .cards { margin-bottom: 12px; }
   body:not(.community-report) .metric-guide { gap: 12px 24px; margin-block: 14px; }
   body:not(.community-report) footer { break-inside: avoid; margin-top: 8px; }
-  body:not(.community-report) .report-closing { break-inside: avoid; }
+  body:not(.community-report) .report-closing { break-inside: auto; }
   body:not(.community-report) .footer-content { display: flex; justify-content: space-between; gap: 16px; border: 0; border-top: 1px solid #dbe4ee; border-radius: 0; padding-top: 6px; }
   body:not(.community-report) .project, body:not(.community-report) .promotion { padding: 0; border: 0; background: transparent; }
   body:not(.community-report) .project-name { font-size: 9pt; }
@@ -273,9 +294,60 @@ html[dir="rtl"] .cache-reference, html[dir="rtl"] .card .notice { direction: rtl
 .print-appendix-note { display: none; }
 .data-citation p { font-size: 13px; }
 @media print {
-  .technical-appendix, .agent-usage, .device-rating-evidence { display: none !important; }
+  .technical-appendix, .device-rating-evidence { display: none !important; }
+  .agent-usage h3 { break-after: avoid; }
+  .agent-usage li { break-inside: avoid; margin-block: 8px; line-height: 1.5; }
   .print-appendix-note { display: block; font-size: 8pt; color: #526579; }
   .data-citation { break-inside: avoid; }
 }
 
 @media print { #reading-results { break-inside: avoid; } }
+
+/* Saved device facts precede interpretation; sourced reviews remain visible in print. */
+#device-health .smart-table { max-width: 100%; table-layout: fixed; }
+#device-health .smart-table th { width: 36%; }
+#device-health td, #device-health th { overflow-wrap: anywhere; }
+/* Match the website public-report rows; use local system fonts for offline reports. */
+#online-reviews { --review-ink: #202d3b; --review-body: #465667; --review-accent: #315e91; --review-line: #d6e0e9; }
+#online-reviews .result { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 28px 0; border-top: 1px solid var(--review-line); color: var(--review-ink); }
+#online-reviews .result:last-child { padding-bottom: 0; }
+#online-reviews .result h3 { font-size: 20px; margin: 0 0 8px; }
+#online-reviews .result h3 a { display: inline-flex; align-items: center; min-height: 44px; color: var(--review-accent); }
+#online-reviews .result-capacity { font-size: 15px; font-weight: 400; color: var(--review-body); white-space: nowrap; }
+#online-reviews .device-path { display: flex; flex-wrap: wrap; gap: 12px 36px; margin: 12px 0 0; }
+#online-reviews .device-path > div { display: flex; gap: 10px; min-width: 0; }
+#online-reviews .device-path dt { font-size: 14px; color: var(--review-body); flex-shrink: 0; }
+#online-reviews .device-path dd { margin: 0; overflow-wrap: anywhere; }
+#online-reviews .result-performance { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 20px; padding: 18px 22px; border: 1px solid var(--review-line); border-radius: 8px; }
+#online-reviews .result-performance span, #online-reviews .result-performance strong { display: block; }
+#online-reviews .result-performance span { font-size: 14px; color: var(--review-body); }
+#online-reviews .result-performance strong { font-size: 23px; font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+#online-reviews .review-details { margin: 0; }
+#online-reviews .review-details dt { font-weight: 600; margin: 0 0 4px; }
+#online-reviews .review-details dd { margin: 0 0 14px; }
+#online-reviews .review-details dd:last-child { margin-bottom: 0; }
+#online-reviews .result-contributor { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+#online-reviews .result-contributor > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-width: 0; }
+#online-reviews .result-contributor span { color: var(--review-body); font-size: 13px; }
+#online-reviews .result-contributor a { display: inline-flex; align-items: center; min-height: 44px; overflow-wrap: anywhere; }
+#online-reviews .result-contributor > a { flex-shrink: 0; }
+#online-reviews .review-source-url { display: none; }
+@media screen and (max-width: 700px) {
+  #online-reviews .device-path { display: grid; gap: 4px; }
+  #online-reviews .result-performance { grid-template-columns: 1fr; padding: 10px 16px; gap: 0; }
+  #online-reviews .result-performance > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; padding: 12px 0; border-bottom: 1px solid var(--review-line); }
+  #online-reviews .result-performance > div:last-child { border: 0; }
+  #online-reviews .result-performance strong { font-size: 19px; grid-column: 2; grid-row: 1; align-self: center; }
+  #online-reviews .result-contributor { align-items: start; flex-direction: column; gap: 4px; }
+}
+@media print {
+  #device-health { break-inside: auto; }
+  #device-health tr { break-inside: avoid; }
+  #online-reviews h2, #online-reviews h3, #online-reviews dt { break-after: avoid; }
+  #online-reviews .online-review { break-inside: auto; }
+  #online-reviews .result { padding: 18px 0; gap: 12px; }
+  #online-reviews .result h3 a, #online-reviews .result-contributor a { min-height: 0; }
+  #online-reviews .result-performance { padding: 12px; gap: 16px; break-inside: avoid; }
+  #online-reviews .result-performance strong { font-size: 15pt; }
+  #online-reviews .review-source-url { display: block; font-size: 8pt; color: var(--review-body); overflow-wrap: anywhere; margin: 0; }
+}

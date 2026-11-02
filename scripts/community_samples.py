@@ -1,8 +1,8 @@
 """Typed reference snapshots, isolated from locally owned submissions."""
 
-from community_data import POLICY, digest, normalise_payload, validate_payload
+from community_data import POLICY, digest, normalise_payload, validate_payload, without_private_metadata
 from agent_usage import agent_usage
-from community_store import FIELDS, CASE_FIELDS, CASE_TYPES, _value, _assign, write_quality, read_quality
+from community_store import FIELDS, CASE_FIELDS, CASE_TYPES, _value, _assign, read_quality
 
 
 def schema(db):
@@ -50,12 +50,16 @@ def replace(db, parent, items):
     db.execute('DELETE FROM assessment_presence WHERE owner_id=? AND report_id<>?', (parent,parent))
     db.execute("DELETE FROM samples WHERE parent_id=?", (parent,))
     for ordinal, item in enumerate(items):
-        record = item["record"]; payload = normalise_payload(record["submission"]); remote = record["id"]
+        record = item["record"]; remote = record["id"]
+        validate_payload(record["submission"])
+        payload = normalise_payload(without_private_metadata(record["submission"]))
         names = ["parent_id", "id", "url", "created_at", "expected_hash", "ordinal"] + [name for name, _, _ in FIELDS]
         values = [parent, remote, record["url"], record["created_at"], digest(payload), ordinal] + [_value(payload, field) for _, field, _ in FIELDS]
         db.execute(f"INSERT INTO samples({','.join(names)}) VALUES({','.join('?' for _ in values)})", values)
         for field, table in (("matched_on", "sample_matches"), ("differences", "sample_differences")):
-            for index, value in enumerate(item[field]):
+            values = (list(dict.fromkeys("unknown_condition" if value == "measurement_quality" else value for value in item[field]))
+                      if field == "differences" else item[field])
+            for index, value in enumerate(values):
                 db.execute(f"INSERT INTO {table} VALUES(?,?,?,?)", (parent, remote, value, index))
         for kind, model in payload["hardware"].items():
             db.execute("INSERT INTO sample_hardware VALUES(?,?,?,?,?)", (parent, remote, kind, model["model"], model["source"]))
@@ -74,7 +78,6 @@ def replace(db, parent, items):
                 db.execute("INSERT INTO sample_depth VALUES(?,?,?,?,?,?)", (parent, remote, index, sample, point["depth"], point["percent"]))
         from community_assessment import write
         write(db, parent, remote, payload.get('assessment'))
-        write_quality(db, parent, remote, payload.get("quality"))
 
 
 def read(db, parent):
@@ -109,8 +112,9 @@ def read(db, parent):
         validate_payload(payload)
         if not hmac.compare_digest(digest(payload), row["expected_hash"]):
             raise CommunityError("integrity_mismatch")
-        result.append({"record": {"id": remote, "url": row["url"], "created_at": row["created_at"], "verification": "unverified", "submission": payload,
+        result.append({"record": {"id": remote, "url": row["url"], "created_at": row["created_at"], "verification": "unverified", "submission": without_private_metadata(payload),
                                   "agent_usage": agent_usage(row["url"])},
             "matched_on": [r[0] for r in db.execute("SELECT kind FROM sample_matches WHERE parent_id=? AND id=? ORDER BY ordinal", keys)],
-            "differences": [r[0] for r in db.execute("SELECT field FROM sample_differences WHERE parent_id=? AND id=? ORDER BY ordinal", keys)]})
+            "differences": list(dict.fromkeys("unknown_condition" if r[0] == "measurement_quality" else r[0]
+                for r in db.execute("SELECT field FROM sample_differences WHERE parent_id=? AND id=? ORDER BY ordinal", keys)))})
     return result

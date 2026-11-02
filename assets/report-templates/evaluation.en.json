@@ -1,0 +1,79 @@
+{
+  "run_id": "{run_id}",
+  "language": "en",
+  "sections": [
+    {
+      "kind": "bottleneck",
+      "title": "Performance constraints",
+      "paragraphs": [
+        "{bottleneck_analysis}"
+      ],
+      "sources": [],
+      "evidence_status": "needs_followup"
+    },
+    {
+      "kind": "upgrades",
+      "title": "Would an upgrade help?",
+      "paragraphs": [
+        "{upgrades_analysis}"
+      ],
+      "sources": [],
+      "evidence_status": "needs_followup"
+    },
+    {
+      "kind": "anomalies",
+      "title": "Observed device behaviour",
+      "paragraphs": [
+        "{anomalies_analysis}"
+      ],
+      "sources": [],
+      "evidence_status": "needs_followup"
+    }
+  ],
+  "evidence": {
+    "device_health": {
+      "status": "collected",
+      "model": "{exact_measured_model}",
+      "tool": "smartctl {actual_version}",
+      "captured_at": "{actual_capture_time}",
+      "scope": "{actual_capture_scope_without_missing_work_prompts}",
+      "rows": [
+        {
+          "field": "model",
+          "value": "{firmware_reported_model}"
+        },
+        {
+          "field": "firmware",
+          "value": "{firmware_version}"
+        },
+        {
+          "field": "capacity",
+          "value": "{firmware_reported_capacity}"
+        },
+        {
+          "field": "health",
+          "value": "{smart_health_and_warnings}"
+        }
+      ]
+    },
+    "review_selection": "{search_scope_selection_reason_and_missing_matches}",
+    "online_reviews": [
+      {
+        "url": "https://example.com/replace-with-original-review",
+        "label": "{original_review_title}",
+        "checked_at": "{actual_YYYY-MM-DD}",
+        "context": [],
+        "measurements": [],
+        "sections": []
+      }
+    ],
+    "further_testing": {
+      "decision": "uncertain",
+      "reason": "{recommendation_and_supporting_measurements_sources}",
+      "remaining_unknowns": "{cache_identity_capacity_and_other_unconfirmed_facts}",
+      "when_to_continue": "{specific_goal_that_would_justify_further_testing}"
+    }
+  },
+  "report_policy": "verified_only",
+  "followup": []
+}

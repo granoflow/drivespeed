@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"scripts"))
 from test_community import payload as historical_payload, state_dir, ID
-from community_data import CommunityError, POLICY, digest, normalise_payload, parse_json
+from community_data import CommunityError, POLICY, digest, normalise_payload, parse_json, without_private_metadata
 from community_store import CommunityStore
 from community_network import CommunityClient, CommunityHTTP, NetworkError, check_receipt
 import community
@@ -25,6 +25,12 @@ def payload():
     result = historical_payload()
     result["quality"] = {"status": "quiet_observed"}
     return result
+
+
+def publishable_payload():
+    from test_community import publishable_result
+    from community_data import project_result
+    return project_result(publishable_result(), "https://x.com/fixture_user", submission_id=ID)
 
 
 REMOTE_ID = "22222222-2222-4222-8222-222222222222"
@@ -80,29 +86,31 @@ class FakeHTTP:
 
 class ClientTests(unittest.TestCase):
     def setUp(self):
+        locale = patch.object(community, "language_default", return_value="en")
+        locale.start(); self.addCleanup(locale.stop)
         self.directory = state_dir(); self.store = CommunityStore(self.directory)
-        self.store.create(payload(), "private-run", "PRIVATE-LOCAL-PATH")
+        self.store.create(publishable_payload(), "private-run", "PRIVATE-LOCAL-PATH")
         self.http = FakeHTTP(self.store); self.events = []
         self.client = CommunityClient(self.store, self.http, self.events.append, sleep=lambda _: None)
     def tearDown(self):
         self.store.close()
     def consent(self):
         self.store.consent(ID, POLICY["notice_version"])
-    def test_unqualified_frozen_snapshot_cannot_start_authorization(self):
-        for status in (None, "visibility_limited", "interference_observed"):
+    def test_missing_identity_or_core_cannot_start_new_authorization_but_old_receipts_work(self):
+        for missing in ("identity", "core"):
             with CommunityStore(state_dir()) as store:
-                value = payload()
-                if status is None:
-                    value.pop("quality")
+                value = publishable_payload()
+                if missing == "identity":
+                    value.pop("device_identity")
                 else:
-                    value["quality"]["status"] = status
+                    value["cases"].pop(0)
                 store.create(value, "old-run", "PRIVATE-LOCAL-PATH")
                 store.consent(ID, POLICY["notice_version"])
                 http = FakeHTTP(store)
                 client = CommunityClient(store, http, sleep=lambda _: None)
                 with self.assertRaises(CommunityError) as caught:
                     client.publish(ID)
-                self.assertEqual(caught.exception.code, "measurement_quality")
+                self.assertEqual(caught.exception.code, "missing_parameters" if missing == "identity" else "validation_failed")
                 self.assertFalse(any(path.endswith("/auth/flows") or
                     (method == "POST" and path == "/api/v1/benchmarks")
                     for method, path in http.calls))
@@ -113,6 +121,19 @@ class ClientTests(unittest.TestCase):
                 self.assertEqual(client.withdraw(ID, confirm=True)["status"], "withdrawn")
                 self.assertEqual(http.calls.count(("DELETE", "/api/v1/benchmarks/" + ID)), 1)
                 self.assertEqual(store.payload(ID), normalise_payload(value))
+
+    def test_quality_is_optional_and_does_not_block_authorized_publication(self):
+        for status in (None, "visibility_limited", "interference_observed"):
+            with self.subTest(status=status), CommunityStore(state_dir()) as store:
+                value = publishable_payload()
+                if status is not None:
+                    value["quality"] = {"status": status}  # Legacy owner metadata.
+                store.create(value, "private-run", "PRIVATE-LOCAL-PATH")
+                store.consent(ID, POLICY["notice_version"])
+                http = FakeHTTP(store)
+                self.assertTrue(CommunityClient(store, http, sleep=lambda _: None).publish(ID)["accepted"])
+                self.assertEqual(http.calls.count(("POST", "/api/v1/auth/flows")), 1)
+                self.assertEqual(http.calls.count(("POST", "/api/v1/benchmarks")), 1)
 
     def test_no_consent_or_withdraw_preview_sends_nothing(self):
         with self.assertRaisesRegex(CommunityError, "consent_required"):
@@ -129,7 +150,7 @@ class ClientTests(unittest.TestCase):
         self.consent(); result = self.client.publish(ID)
         self.assertTrue(result["accepted"]); self.assertEqual(result["visibility"], "hidden")
         self.assertIsNone(result["public_url"]); self.assertEqual(result["sample_count"], 1)
-        self.assertEqual(self.store.samples(ID)[0]["record"]["submission"], normalise_payload(receipt(before)["similar"]["items"][0]["record"]["submission"]))
+        self.assertEqual(self.store.samples(ID)[0]["record"]["submission"], normalise_payload(without_private_metadata(receipt(before)["similar"]["items"][0]["record"]["submission"])))
         self.assertEqual(self.store.db.execute("SELECT COUNT(*) FROM reports").fetchone()[0], 1)
         columns = [r[1] for row in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='table'") for r in self.store.db.execute('PRAGMA table_info("'+row[0]+'")')]
         self.assertFalse(any("json" in c.lower() or "blob" in c.lower() for c in columns))
@@ -191,11 +212,48 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(status, 5)
         self.assertEqual(json.loads(output.getvalue().splitlines()[-1])["error"]["side_effects"]["remote"], "check_receipt")
         self.assertEqual(self.store._report(ID)["state"], "pending")
+
+    def test_cli_device_conflict_keeps_local_snapshot_and_explains_ownership_boundary(self):
+        self.consent(); before = self.store.payload(ID); old = self.http.request
+        def conflict(method, path, body=None, headers=None, timeout=20):
+            if method == "POST" and path == "/api/v1/benchmarks":
+                self.http.calls.append((method, path))
+                raise NetworkError("device_conflict", 409)
+            return old(method, path, body, headers, timeout)
+        self.http.request = conflict; output = io.StringIO()
+        with patch.object(community, "CommunityHTTP", return_value=self.http), contextlib.redirect_stdout(output):
+            status = community.main(["publish", "--submission-id", ID, "--state-dir", str(self.directory), "--ui-language", "en"])
+        error = json.loads(output.getvalue().splitlines()[-1])["error"]
+        self.assertEqual((status, error["code"], error["http_status"]), (4, "device_conflict", 409))
+        self.assertEqual(error["message"], community._messages("en")["device_conflict"]["message"])
+        self.assertIn("do not change the fingerprint", error["next_action"])
+        self.assertEqual(self.http.calls.count(("POST", "/api/v1/benchmarks")), 1)
+        self.assertEqual(self.store.payload(ID), before)
+        for private in ("d" * 64, "p" * 43, "u" * 43, "payload_json", "PRIVATE"):
+            self.assertNotIn(private, output.getvalue())
+
+    def test_cli_receipt_preserves_superseded_reason_without_public_link_or_reposting(self):
+        self.consent(); self.client.publish(ID)
+        saved = receipt(self.store.payload(ID), similar=False)
+        saved["receipt"].update(visibility="hidden", reason_code="superseded", public_url=None)
+        calls = []
+        class ReceiptHTTP:
+            origin = ORIGIN
+            def request(self, method, path, body=None, headers=None, timeout=20):
+                calls.append((method, path)); return saved
+        output = io.StringIO()
+        with patch.object(community, "CommunityHTTP", return_value=ReceiptHTTP()), contextlib.redirect_stdout(output):
+            status = community.main(["receipt", "--submission-id", ID, "--state-dir", str(self.directory)])
+        result = json.loads(output.getvalue())
+        self.assertEqual(status, 0); self.assertEqual(result["reason_code"], "superseded")
+        self.assertEqual(result["visibility"], "hidden"); self.assertIsNone(result["public_url"])
+        self.assertTrue(result["accepted"])
+        self.assertTrue(calls and all(method == "GET" for method, _ in calls))
     def test_receipt_and_withdraw_work_with_damaged_snapshot(self):
         self.consent(); self.client.publish(ID)
         self.store.db.execute("UPDATE reports SET tool_version='tampered' WHERE id=?", (ID,)); self.store.db.commit()
         # Return the previously accepted response instead of reconstructing fake server data.
-        saved = receipt(normalise_payload(payload()), similar=False)
+        saved = receipt(normalise_payload(publishable_payload()), similar=False)
         class PrivateHTTP:
             origin = ORIGIN
             def request(self, method, path, body=None, headers=None, timeout=20):
@@ -230,6 +288,23 @@ class ClientTests(unittest.TestCase):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_device_conflict_http_code_is_preserved_without_upstream_text(self):
+        class Response:
+            status = 409
+            def getheader(self, key, default=None):
+                return "application/problem+json" if key == "Content-Type" else default
+            def read1(self, size):
+                raw = json.dumps({"error": {"code": "device_conflict", "message": "PRIVATE-UPSTREAM"}}).encode() if not getattr(self, "done", False) else b""
+                self.done = True; return raw
+        class Connection:
+            def request(self, *args): pass
+            def getresponse(self): return Response()
+            def close(self): pass
+        with patch("http.client.HTTPConnection", return_value=Connection()), self.assertRaises(NetworkError) as error:
+            CommunityHTTP("http://127.0.0.1:8787").request("POST", "/api/v1/benchmarks")
+        self.assertEqual((error.exception.code, error.exception.status), ("device_conflict", 409))
+        self.assertNotIn("PRIVATE", str(error.exception))
+
     def test_agent_usage_is_optional_for_older_servers_and_bound_to_the_source(self):
         from agent_usage import agent_usage
         p = normalise_payload(payload()); value = receipt(p)
@@ -249,7 +324,7 @@ class ProtocolTests(unittest.TestCase):
                 check_receipt(altered, ID, before, ORIGIN)
 
     def test_known_legacy_usage_is_accepted_but_cannot_change_source_or_instructions(self):
-        from agent_usage import LEGACY_AGENT_USAGE, PREVIOUS_AGENT_USAGE, agent_usage
+        from agent_usage import LEGACY_AGENT_USAGE, PREVIOUS_AGENT_USAGE, V3_AGENT_USAGE, agent_usage
         p = normalise_payload(payload()); value = receipt(p)
         record = value["similar"]["items"][0]["record"]
         legacy = {**copy.deepcopy(LEGACY_AGENT_USAGE), "source_url": record["url"]}
@@ -271,6 +346,13 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(NetworkError):
             check_receipt(altered, ID, digest(p), ORIGIN)
         self.assertNotEqual(agent_usage(record["url"])["version"], previous["version"])
+        record["agent_usage"] = {**copy.deepcopy(V3_AGENT_USAGE), "source_url": record["url"]}
+        check_receipt(value, ID, digest(p), ORIGIN)
+        self.assertNotEqual(agent_usage(record["url"])["version"], record["agent_usage"]["version"])
+        altered = copy.deepcopy(value)
+        altered["similar"]["items"][0]["record"]["agent_usage"]["requirements"]["scope"] = "Tampered acceptance"
+        with self.assertRaises(NetworkError):
+            check_receipt(altered, ID, digest(p), ORIGIN)
 
     def test_slow_response_is_bounded_by_absolute_request_deadline(self):
         class Slow(BaseHTTPRequestHandler):

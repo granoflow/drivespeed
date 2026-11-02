@@ -1,0 +1,21 @@
+{
+  "language": "zh",
+  "templates": {
+    "disk_selection": "这次要测哪块磁盘？{disk_choices}",
+    "quick_start": "先测一下{disk_name}的小规模顺序和4 KiB QD1随机读写。临时文件占用{file_size}，本次最多写入{write_limit}，总超时保护为{timeout_description}。",
+    "quick_result": "{disk_name}的快速结果：顺序读取{read_speed}、写入{write_speed}；4 KiB QD1随机读取{random_read_speed}、写入{random_write_speed}。这是小工作集下的初步表现，不代表缓存后稳定速度。报告：{report_link}",
+    "deep_invitation": "要继续做更充分的测试吗？临时文件占用{file_size}，本次最多写入{write_limit}，保留至少{reserve_space}可用空间。{timeout_notice}",
+    "total_timeout_notice": "这项测试需要较长时间，难以精确预计。我们把总超时保护设为{timeout_minutes}分钟；超过这个时间上限，程序将自动停止，并按已测得的数据生成报告。",
+    "partial_result": "本次测试部分完成：{measured_summary}。{stop_reason}，尚未完成{missing_measurements}。已按现有数据生成报告：{report_link}",
+    "capacity_invitation": "要继续检查可用空间的容量与读写完整性吗？本次检查范围为{check_range}，需额外写入{write_limit}，保留{reserve_space}空间。{duration_description}。如果磁盘存在虚假扩容，写入可能损坏已有数据，重要数据请先备份。通过只说明本次文件范围写读一致，不能证明整盘没有坏道或品牌真伪。",
+    "share_invitation": "愿意把这份测速数据公开，供其他人参考吗？{public_data_preview}。你也可以附上经验证的本人X账号链接。只会按你同意的这份预览提交；{privacy_summary}。",
+    "cleanup_summary": "{cleanup_result}。{space_retention_note}",
+    "skill_invitation": "如果你想实测自己的磁盘，可以选择安装DriveSpeed Skill：{skill_url}。自愿分享的设备实测会积累更多可引用资料，帮助其他用户以及模型、Agent后续检索和比较；这不代表模型自动学习或更新参数，也不保证回答准确率提高。",
+    "deep_not_recommended": "建议先不用继续深入测试。{evidence_and_reason}。现有结果已能回答{answered_goal}；长时间写入对这个问题的新增价值有限。{remaining_unknowns}。若以后需要{specific_followup_goal}，再安排对应测试。",
+    "deep_recommended": "建议继续深入测试，主要是为了核实{unresolved_question}。{expected_additional_evidence}。",
+    "smart_context": "SMART 信息读取于{captured_at}。{capture_scope}。型号、固件、容量和 SMART 指标由设备固件报告，可能被修改；SMART 通过不能证明品牌真伪、真实容量或未来可靠性。",
+    "review_context": "以下为其他评测者公开的数据，未由本次测试独立复现。接口、硬盘盒、容量、软件和测试方法不同会影响结果，不能直接据此判定故障或造假。",
+    "privacy_reminder": "分享原始 JSON/日志前，请检查其中的本机路径。",
+    "conversion_context": "报告中的复制耗时是按实测速度换算的；实际复制还取决于另一块磁盘和文件系统。"
+  }
+}
