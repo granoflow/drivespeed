@@ -299,6 +299,9 @@ def peak_plan(total_bytes, free_bytes, write_budget, file_bytes,
     sustained_job = next(job for job in base if job["name"] == "sustained")
     sustained_job.update(io_bytes=sustained, initialize_bytes=file_bytes)
     short_jobs = [job for job in base if job["name"] != "sustained"]
+    for job in short_jobs:
+        if job["rw"] in ("read", "randread"):
+            job["io_bytes"] = max(file_bytes, peak_io_bytes)
     scans = []
     for workload, rw, bs in (("seq_read", "read", MIB),
                              ("seq_write", "write", MIB),

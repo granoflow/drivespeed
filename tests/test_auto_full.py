@@ -80,6 +80,11 @@ class AutomaticPlanTests(unittest.TestCase):
         self.assertEqual(jobs[0]["name"], "prepare")
         self.assertEqual(jobs[-1]["name"], "sustained")
         self.assertEqual(len([job for job in jobs if job["name"].startswith("peak_")]), 24)
+        longer_reads = peak_plan(1000 * GIB, 700 * GIB, 1024 * GIB,
+                                 8 * GIB, 40 * GIB, 40 * GIB)
+        seq_read = next(job for job in longer_reads["jobs"] if job["name"] == "seq_read_q")
+        self.assertEqual(seq_read["io_bytes"], 40 * GIB)
+        self.assertEqual(longer_reads["file_bytes"], 8 * GIB)
         self.assertEqual(sum(job["io_bytes"] for job in jobs
                              if job["rw"] not in ("read", "randread")),
                          config["max_write_bytes"])
