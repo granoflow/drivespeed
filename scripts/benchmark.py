@@ -123,6 +123,7 @@ def parser():
                    help="Peak supplement workload; repeat for each required workload")
     p.add_argument("--supplement-depths", choices=("16,32", "32,64"), metavar="PAIR",
                    help="Adjacent queue-depth pair for a peak supplement")
+    p.add_argument("--peak-source", help="Original peak results to compare with this separate supplement")
     p.add_argument("--quick-from", help="Preserve a same-target quick result alongside the deeper test; never rerun it")
     p.add_argument(
         "--language",
@@ -541,13 +542,14 @@ def execute(args, text, report_text):
         raise ValueError('Trash reuse requires a peak stage, an exact working file size, and default cleanup')
     supplement_workloads = getattr(args, 'supplement_workload', None)
     supplement_depths = getattr(args, 'supplement_depths', None)
+    peak_source_path = getattr(args, 'peak_source', None)
     if args.stage == 'peak-supplement':
         if (args.capacity_from or args.quick_from or args.case_write_bytes is not None
                 or args.propose_write_bytes is None or args.working_file_bytes is None
                 or args.peak_io_bytes is None or not supplement_workloads or not supplement_depths
                 or args.format != 'html'):
             raise ValueError('Peak supplement requires explicit write, file, I/O, workloads and depths')
-    elif supplement_workloads is not None or supplement_depths is not None:
+    elif supplement_workloads is not None or supplement_depths is not None or peak_source_path is not None:
         raise ValueError('Supplement options require peak-supplement stage')
     if args.stage == "quick" and (args.peak_io_bytes is not None or args.capacity_from or args.propose_write_bytes is not None or args.quick_from or args.working_file_bytes is not None or args.case_write_bytes is not None):
         raise ValueError("Quick measurements do not take deeper-test or capacity options")
@@ -567,6 +569,12 @@ def execute(args, text, report_text):
     reuse = trashed_workspace_identity(reuse_path, target, args.working_file_bytes) if reuse_path else None
     ledger = WriteAllowance()
     allowance = ledger.read(target)
+    peak_source = None
+    peak_source_hash = None
+    if peak_source_path:
+        from peak_comparison import load_peak_source, validate_source_target
+        peak_source, peak_source_hash = load_peak_source(peak_source_path)
+        validate_source_target(peak_source, target, args.working_file_bytes)
     capacity_source = None
     if args.capacity_from:
         from capacity_check import load_source, capacity_plan
@@ -581,6 +589,9 @@ def execute(args, text, report_text):
                 supplement_workloads, [int(value) for value in supplement_depths.split(',')])
             if reuse:
                 result['reuse_workspace'] = reuse
+            if peak_source is not None:
+                result['source_peak_sha256'] = peak_source_hash
+                result['source_peak_run_id'] = peak_source['run_id']
             return result
         if args.stage == "peak":
             effective_free = min(target["total_bytes"], target["free_bytes"] + (reuse['payload_bytes'] if reuse else 0))
@@ -721,6 +732,10 @@ def execute(args, text, report_text):
             identity = collect_device_identity(target)
             if identity is not None:
                 result['device_identity'] = identity
+            if peak_source is not None and (identity != peak_source['device_identity']
+                    or engine != peak_source['environment']['engine']
+                    or fio.get('version') != peak_source['environment']['fio']['version']):
+                raise BenchError('unsafe_target', 'Peak source device, I/O engine or fio version changed')
             observation = observe_quality(target)
             # Observation is conversation context, not report/JSON data. Do not
             # persist it or rewrite a saved run using a later idle observation.
@@ -899,6 +914,9 @@ def execute(args, text, report_text):
                     names = [f'peak_{workload}_{depth}_{repeat}' for depth in pair for repeat in (1, 2)]
                     assessments[workload] = assess_peak_pair([cases[name] for name in names], **config['peak_criteria'])
                 result['peak_supplement'] = assessments
+                if peak_source is not None:
+                    from peak_comparison import compare_peak_runs
+                    result['peak_comparison'] = compare_peak_runs(peak_source, result)
                 # A separate diagnostic cannot make the prior full run complete.
                 result['completeness'] = {'complete': False, 'missing_core': ['full_run']}
             elif capacity_source is not None:
