@@ -85,6 +85,32 @@ def state_dir():
 
 
 class ProjectionTests(unittest.TestCase):
+    def test_peak_method_projects_only_public_core_workloads(self):
+        original = local_result()
+        original["tool"]["method_version"] = "drivespeed-peak-v1"
+        original["plan"]["method_version"] = "drivespeed-peak-v1"
+        original["plan"]["jobs"] = [dict(case) for case in original["cases"]]
+        for item in original["cases"]:
+            for direction in ("read", "write"):
+                latency = item["metrics"][direction].get("latency_us")
+                if latency is not None:
+                    latency["mean"] = 2
+        scan = copy.deepcopy(original["cases"][0])
+        scan.update(name="peak_seq_read_16_1", qd=16)
+        original["cases"].append(scan)
+        with patch("workloads.case_core_missing", return_value=[]), \
+             patch("workloads.peak_completeness", return_value={"complete": True, "missing_core": []}):
+            projected = data.project_result(original, "https://x.com/fixture_user",
+                                            submission_id=ID)
+        self.assertEqual(projected["tool"]["method_version"], "drivespeed-peak-v1")
+        self.assertEqual(len(projected["cases"]), 11)
+        self.assertFalse(any(case["name"].startswith("peak_") for case in projected["cases"]))
+        data.validate_payload(projected)
+        with patch("workloads.peak_completeness",
+                   return_value={"complete": False, "missing_core": ["peak.plateau"]}):
+            with self.assertRaises(data.CommunityError):
+                data.project_result(original, "https://x.com/fixture_user", submission_id=ID)
+
     def test_projection_is_whitelisted_and_does_not_mutate_source(self):
         original = local_result()
         before = copy.deepcopy(original)
@@ -173,6 +199,16 @@ class ProjectionTests(unittest.TestCase):
         result = local_result()
         result["cases"][0]["metrics"]["achieved_depth"] = {"1": 0, ">=64": 100}
         self.assertIsNone(data.project_result(result, "https://x.com/fixture_user")["cases"][0]["achieved_depth"])
+
+    def test_empty_open_ended_fio_bucket_keeps_the_measured_depths(self):
+        result = local_result()
+        depth = result["cases"][0]["metrics"]["achieved_depth"]
+        depth[">=64"] = 0
+        payload = data.project_result(result, "https://x.com/fixture_user")
+        self.assertEqual(payload["cases"][0]["achieved_depth"], [{"depth": 1, "percent": 100}])
+        depth["1"] = 100.2
+        payload = data.project_result(result, "https://x.com/fixture_user")
+        self.assertIsNone(payload["cases"][0]["achieved_depth"])
 
     def test_invalid_zero_like_byte_counts_are_not_replaced_by_zero(self):
         for count in (None, False, 0.0, "", -1):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run bounded file-based fio tests. Standard library only, Python 3.10+."""
 
-from workloads import AUTO_METHODS, QUICK_METHODS, quick_plan
+from workloads import AUTO_METHODS, PEAK_METHOD, QUICK_METHODS, quick_plan
 import argparse
 import json
 import os
@@ -47,8 +47,10 @@ from workloads import (
     cache_assessment,
     job_label,
     auto_plan,
+    peak_plan,
     collection_status,
     core_completeness,
+    peak_completeness,
     case_core_missing,
     active_runtime_ms,
 )
@@ -70,7 +72,13 @@ def parser():
     )
     p.add_argument("--propose-write-bytes", type=int,
                    help="Propose an exact finite normal-test write plan; does not authorize writes without plan confirmation")
-    p.add_argument("--stage", choices=("quick", "full"), default="full",
+    p.add_argument("--working-file-bytes", type=int,
+                   help="MiB-aligned full-test working file size within the available space and write budget")
+    p.add_argument("--case-write-bytes", type=int,
+                   help="MiB-aligned per-case write limit for full measurements")
+    p.add_argument("--peak-io-bytes", type=int,
+                   help="MiB-aligned byte limit for each queue-depth scan")
+    p.add_argument("--stage", choices=("quick", "full", "peak"), default="full",
                    help="Quick actual sequential measurement, or deeper full test; legacy CLI default is full")
     p.add_argument("--quick-from", help="Preserve a same-target quick result alongside the deeper test; never rerun it")
     p.add_argument(
@@ -291,7 +299,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                                     )
                                 )
                             last_elapsed, last_write_bytes = observed_seconds, written
-                        timing = collection_status(dict(rw="write", metrics=observed, series=cache_points)) if config.get("method_version") in AUTO_METHODS else None
+                        timing = collection_status(dict(rw="write", metrics=observed, series=cache_points)) if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD) else None
                         assessment = cache_assessment(cache_points, sampling_status=timing)
                         if (
                             assessment["status"] == "observed_drop_stable"
@@ -363,7 +371,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                 raise ValueError(
                     "Incomplete diagnostic coverage; refusing to claim a complete write/read verification"
                 )
-            tolerance = 0 if config.get("method_version") in (*AUTO_METHODS, "drivespeed-capacity-v1") else job["bs"] * job["qd"]
+            tolerance = 0 if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD, "drivespeed-capacity-v1") else job["bs"] * job["qd"]
             if completed > job["io_bytes"] + tolerance:
                 raise ValueError("Reported I/O exceeds the planned bound")
             case["status"] = "completed"
@@ -399,10 +407,10 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             case["metrics_complete"] = case["status"] == "completed"
             for path in output.glob(f"{job['name']}_bw.*.log"):
                 try:
-                    case["series"].extend(bandwidth_series(path, strict=config.get("method_version") in AUTO_METHODS))
+                    case["series"].extend(bandwidth_series(path, strict=config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD)))
                 except (OSError, ValueError) as exc:
                     case["collection_error"] = str(exc)
-            if config.get("method_version") in (*AUTO_METHODS, *QUICK_METHODS):
+            if config.get("method_version") in (*AUTO_METHODS, *QUICK_METHODS, PEAK_METHOD):
                 case["collection_status"] = collection_status(case)
                 missing = case_core_missing(case, job, config)
                 if missing and case["status"] == "completed":
@@ -412,19 +420,25 @@ def run_case(fio, job, config, engine, output, work, target, progress):
     return case
 
 
-def normal_plan(target, allowance, proposed_bytes=None):
+def normal_plan(target, allowance, proposed_bytes=None, file_bytes=None, case_write_bytes=None):
+    def make_plan(run_cap, remaining_cap):
+        if file_bytes is None and case_write_bytes is None:
+            return auto_plan(target["total_bytes"], target["free_bytes"], run_cap, remaining_cap)
+        return auto_plan(target["total_bytes"], target["free_bytes"], run_cap, remaining_cap,
+                         file_bytes, case_write_bytes)
+
     if allowance.get("mode") == "single_run":
         amount = 1024 * GIB if proposed_bytes is None else proposed_bytes
         if type(amount) is not int or not 0 < amount <= 2**63 - 1:
             raise ValueError("Invalid single-run write limit")
-        config = auto_plan(target["total_bytes"], target["free_bytes"], amount, amount)
+        config = make_plan(amount, amount)
         config.update(total_timeout_seconds=2580, max_runtime_seconds=2580)
         return config
     if proposed_bytes is None:
-        return auto_plan(target["total_bytes"], target["free_bytes"], allowance["run_cap"], allowance["remaining"])
+        return make_plan(allowance["run_cap"], allowance["remaining"])
     if type(proposed_bytes) is not int or not 0 < proposed_bytes <= 2**63 - 1:
         raise ValueError("Invalid finite write proposal")
-    config = auto_plan(target["total_bytes"], target["free_bytes"], proposed_bytes, proposed_bytes)
+    config = make_plan(proposed_bytes, proposed_bytes)
     config.update(additional_authorized_bytes=max(0, config["max_write_bytes"] - allowance["remaining"]) if allowance["present"] else 0,
                   normal_run_cap_bytes=max(allowance["run_cap"], config["max_write_bytes"]) if allowance["present"] else config["max_write_bytes"])
     return config
@@ -459,10 +473,17 @@ def load_quick_source(filename, target):
 
 
 def execute(args, text, report_text):
-    if args.stage == "quick" and (args.capacity_from or args.propose_write_bytes is not None or args.quick_from):
+    if args.stage == "quick" and (args.peak_io_bytes is not None or args.capacity_from or args.propose_write_bytes is not None or args.quick_from or args.working_file_bytes is not None or args.case_write_bytes is not None):
         raise ValueError("Quick measurements do not take deeper-test or capacity options")
-    if args.capacity_from and args.propose_write_bytes is not None:
+    if args.capacity_from and (args.propose_write_bytes is not None or args.working_file_bytes is not None or args.case_write_bytes is not None):
         raise ValueError("Capacity checks use their own exact authorization proposal")
+    if args.stage == "peak":
+        if (args.capacity_from or args.quick_from or args.propose_write_bytes is None
+                or args.working_file_bytes is None or args.case_write_bytes is None
+                or args.peak_io_bytes is None):
+            raise ValueError("Peak stage requires explicit write, file, case and peak I/O bounds")
+    elif args.peak_io_bytes is not None:
+        raise ValueError("Peak I/O limit requires peak stage")
     reference_data = (
         load_reference_data(args.reference_file) if args.reference_file else {}
     )
@@ -473,9 +494,19 @@ def execute(args, text, report_text):
     if args.capacity_from:
         from capacity_check import load_source, capacity_plan
         capacity_source = load_source(args.capacity_from, target)
-    config = (quick_plan(target) if args.stage == "quick" else
-              capacity_plan(target, allowance, capacity_source) if capacity_source is not None else
-              normal_plan(target, allowance, args.propose_write_bytes))
+    def build_plan():
+        if args.stage == "quick":
+            return quick_plan(target)
+        if args.stage == "peak":
+            return peak_plan(target["total_bytes"], target["free_bytes"],
+                             args.propose_write_bytes, args.working_file_bytes,
+                             args.case_write_bytes, args.peak_io_bytes)
+        if capacity_source is not None:
+            return capacity_plan(target, allowance, capacity_source)
+        return normal_plan(target, allowance, args.propose_write_bytes,
+                           args.working_file_bytes, args.case_write_bytes)
+
+    config = build_plan()
     quick_source = None
     if args.quick_from:
         quick_source = load_quick_source(args.quick_from, target)
@@ -607,9 +638,7 @@ def execute(args, text, report_text):
             print(text.get('quality_' + observation_status, observation_status), file=sys.stderr)
             fresh = check_target(target, config["reserve_bytes"])
             target.update(fresh)
-            config = (quick_plan(target) if args.stage == "quick" else
-                      capacity_plan(target, allowance, capacity_source) if capacity_source is not None else
-                      normal_plan(target, allowance, args.propose_write_bytes))
+            config = build_plan()
             result["plan"] = config
             confirmed = confirm_write(target, config, allowance, text)
             deadline = RunDeadline(config.get("total_timeout_seconds", config["max_runtime_seconds"]))
@@ -635,6 +664,22 @@ def execute(args, text, report_text):
                 os.close(fd)
             for job in config["jobs"]:
                 deadline.check()
+                if (config.get("method_version") == PEAK_METHOD
+                        and job.get("peak_workload") and job["qd"] == 64):
+                    from peak_analysis import assess_peak_pair
+                    workload = job["peak_workload"]
+                    previous = {case["name"]: case for case in result["cases"]}
+                    names = [f"peak_{workload}_{depth}_{repeat}"
+                             for depth in (16, 32) for repeat in (1, 2)]
+                    if all(name in previous for name in names) and assess_peak_pair(
+                            [previous[name] for name in names],
+                            **config["peak_criteria"])["status"] == "plateau":
+                        case = dict(**job, status="skipped", reason="peak_plateau", series=[])
+                        result["cases"].append(case)
+                        progress.emit(job["name"], "skipped", force=True)
+                        save(output / f"{job['name']}.case.json", case)
+                        save(output / "results.json", result)
+                        continue
                 progress.emit(job["name"], percent=0, force=True)
                 attempted.add(job["name"])
                 try:
@@ -744,7 +789,7 @@ def execute(args, text, report_text):
             )
             if any(c.get("collection_status") == "collected_irregular" for c in result["cases"]):
                 result["notes"].append("sampling_irregular")
-            timing = collection_status(sustained) if config.get("method_version") in AUTO_METHODS else None
+            timing = collection_status(sustained) if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD) else None
             result["sustained_summary"] = sustained_summary(sustained.get("series", []), sampling_status=timing)
             result["cache_assessment"] = cache_assessment(sustained.get("series", []), sampling_status=timing)
             result["cache_assessment"]["stop_reason"] = sustained.get(
@@ -755,6 +800,10 @@ def execute(args, text, report_text):
                 result["completeness"] = completeness(result)
             else:
                 result["completeness"] = core_completeness(result)
+            if config.get("method_version") == PEAK_METHOD:
+                from peak_analysis import assess_peak_scan
+                result["peak_assessment"] = assess_peak_scan(result["cases"], **config["peak_criteria"])
+                result["completeness"] = peak_completeness(result)
             if not result["completeness"]["complete"]:
                 if result["outcome"] == "complete":
                     result["outcome"] = "partial"

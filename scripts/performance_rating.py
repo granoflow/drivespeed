@@ -1,5 +1,5 @@
 """Evidence-bound throughput ratings; no authenticity or health classification."""
-from workloads import AUTO_METHODS
+from workloads import AUTO_METHODS, PEAK_METHOD
 import json
 import math
 from datetime import date
@@ -93,7 +93,7 @@ def performance_ratings(result, today=None):
         if not positive(value):
             continue
         row['measured'] = value
-        if result.get('tool', {}).get('method_version') in AUTO_METHODS and result.get('measurement_quality', {}).get('status') != 'quiet_observed':
+        if result.get('tool', {}).get('method_version') in (*AUTO_METHODS, PEAK_METHOD) and result.get('measurement_quality', {}).get('status') != 'quiet_observed':
             row['reason'] = 'measurement_quality'
             continue
         context = comparison_context(result, case)

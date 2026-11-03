@@ -1,6 +1,6 @@
 """Public report projection and in-memory transport; no network or cache files."""
 
-from workloads import AUTO_METHOD, AUTO_METHODS, QUICK_METHODS
+from workloads import AUTO_METHOD, AUTO_METHODS, PEAK_METHOD, QUICK_METHODS
 import hashlib
 import json
 import math
@@ -208,7 +208,7 @@ def validate_payload(payload):
             validate_device_identity(payload['device_identity'])
         except ValueError:
             _fail('device_identity')
-    if payload["tool"]["method_version"] in (*AUTO_METHODS, *QUICK_METHODS):
+    if payload["tool"]["method_version"] in (*AUTO_METHODS, PEAK_METHOD, *QUICK_METHODS):
         require_report_data(payload)
     return payload
 
@@ -322,7 +322,7 @@ REPORT_CASES = {name: FULL_CASES[name] for name in ('seq_read', 'seq_write', 'ra
 
 def require_report_data(payload):
     """Qualify the data a speed report uses, independently of the test profile."""
-    automatic = payload['tool']['method_version'] in (*AUTO_METHODS, *QUICK_METHODS)
+    automatic = payload['tool']['method_version'] in (*AUTO_METHODS, PEAK_METHOD, *QUICK_METHODS)
     cases = {case['name']: case for case in payload['cases']}
     if len(cases) != len(payload['cases']) or not REPORT_CASES.keys() <= cases.keys():
         _fail('cases')
@@ -388,9 +388,17 @@ def project_result(result, profile_url, intro="", submission_id=None):
             _fail("hardware.access_interface")
     instant = _timestamp(result.get("created"), "created")
     method = result.get("tool", {}).get("method_version")
-    if method not in ("drivespeed-file-v1", *AUTO_METHODS, *QUICK_METHODS):
+    if method not in ("drivespeed-file-v1", *AUTO_METHODS, PEAK_METHOD, *QUICK_METHODS):
         _fail("tool.method_version", "missing_parameters")
-    automatic = method in (*AUTO_METHODS, *QUICK_METHODS)
+    automatic = method in (*AUTO_METHODS, PEAK_METHOD, *QUICK_METHODS)
+    if method == PEAK_METHOD:
+        from workloads import peak_completeness
+        try:
+            qualified = peak_completeness(result)
+        except (TypeError, KeyError, AttributeError, ValueError):
+            _fail("cases")
+        if not qualified["complete"]:
+            raise CommunityError("validation_failed", qualified["missing_core"])
     if automatic:
         from workloads import case_core_missing, collection_status
         try:
@@ -423,7 +431,8 @@ def project_result(result, profile_url, intro="", submission_id=None):
             models[kind] = {"model": value, "source": "user" if source.get("source") == "user" else "detected"}
     cases, engines = [], set()
     for local in result.get("cases", []):
-        if local.get("name") == "prepare" or local.get("status") == "skipped":
+        if (local.get("name") == "prepare" or local.get("status") == "skipped"
+                or method == PEAK_METHOD and local.get("name", "").startswith("peak_")):
             continue
         field = f"cases[{len(cases)}]"
         if _command(local, "direct", field) != "1":
@@ -446,12 +455,19 @@ def project_result(result, profile_url, intro="", submission_id=None):
         raw_depth = measurements.get("achieved_depth", {})
         if not isinstance(raw_depth, dict):
             _fail(field + ".achieved_depth")
+        # fio emits an open-ended bucket even when nothing reached it.
+        if raw_depth.get(">=64") == 0:
+            raw_depth = {key: value for key, value in raw_depth.items() if key != ">=64"}
         depth = None
         if raw_depth and all(isinstance(k, str) and k.isdecimal() and int(k) > 0 for k in raw_depth):
-            depth = [{"depth": int(k), "percent": _number(v, field + ".achieved_depth")} for k, v in sorted(raw_depth.items(), key=lambda item: int(item[0]))]
+            points = [{"depth": int(k), "percent": _number(v, field + ".achieved_depth")} for k, v in sorted(raw_depth.items(), key=lambda item: int(item[0]))]
+            # Very short fio runs can report a bucket over 100%. Preserve
+            # the raw value locally and leave the public distribution absent.
+            if all(point["percent"] <= 100 for point in points):
+                depth = points
         cache = None
         if local.get("cache_test") or local.get('name') == 'sustained' and 'links' in result.get('hardware', {}):
-            if method == AUTO_METHOD:
+            if method in (AUTO_METHOD, PEAK_METHOD):
                 from workloads import cache_assessment
                 assessed = cache_assessment(local.get("series", []), sampling_status=collection_status(local))
             else:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render trusted measurement numbers into an escaped, offline HTML/PDF report."""
 
-from workloads import AUTO_METHOD, AUTO_METHODS, QUICK_METHODS
+from workloads import AUTO_METHOD, AUTO_METHODS, PEAK_METHOD, QUICK_METHODS
 import argparse
 import html
 import json
@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from progress import ASSETS, language_default, messages
-from workloads import sustained_summary, cache_assessment, job_label, collection_status, core_completeness
+from workloads import sustained_summary, cache_assessment, job_label, collection_status, core_completeness, peak_completeness
 from performance_rating import link_reference, component_summary, upgrade_parameters
 from reference_data import (
     load_reference_data,
@@ -343,7 +343,7 @@ def render_peak_comparison(result, text):
         samples = [p["mb_s"] for p in case.get("series", [])
                    if p.get("direction") == direction and isinstance(p.get("mb_s"), (int, float))
                    and math.isfinite(p["mb_s"]) and p["mb_s"] >= 0]
-        timing_ok = result.get("tool", {}).get("method_version") not in AUTO_METHODS or collection_status(case) == "collected"
+        timing_ok = result.get("tool", {}).get("method_version") not in (*AUTO_METHODS, PEAK_METHOD) or collection_status(case) == "collected"
         peak = max(samples) if samples and timing_ok else None
         average = case.get("metrics", {}).get(direction, {}).get("mb_s")
         cap = host.get(direction + "_mb_s")
@@ -916,9 +916,10 @@ def render_report(result, output, language, text, requested_format="html", compa
     )
     hardware = result.get("hardware", {})
     sustained_case = next((c for c in cases if c["name"] == "sustained"), {})
-    automatic = result.get("tool", {}).get("method_version") in AUTO_METHODS
-    mandatory_cache = result.get("tool", {}).get("method_version") == AUTO_METHOD
-    completeness = core_completeness(result) if mandatory_cache else result.get("completeness", {})
+    automatic = result.get("tool", {}).get("method_version") in (*AUTO_METHODS, PEAK_METHOD)
+    mandatory_cache = result.get("tool", {}).get("method_version") in (AUTO_METHOD, PEAK_METHOD)
+    completeness = (peak_completeness(result) if result.get("tool", {}).get("method_version") == PEAK_METHOD
+                    else core_completeness(result) if mandatory_cache else result.get("completeness", {}))
     timing = collection_status(sustained_case) if automatic else None
     limited_windows = timing not in (None, "collected")
     assessment = (cache_assessment(sustained_case.get("series", []), sampling_status=timing)
@@ -930,10 +931,12 @@ def render_report(result, output, language, text, requested_format="html", compa
         ("rand_read", "read"),
         ("rand_write", "write"),
     ]:
-        case = next((c for c in completed if c["name"] == name), {})
-        value = case.get("metrics", {}).get(direction, {}).get("mb_s")
-        if value is not None:
-            cards.append(card(text[name], number(value), name))
+        for case_name in (name, name + "_q"):
+            case = next((c for c in completed if c["name"] == case_name), {})
+            metrics = case.get("metrics", {}).get(direction, {})
+            value = metrics.get("mb_s")
+            if value is not None:
+                cards.append(card(text[case_name], number(value), case_name))
     short_cards, cards = cards, []
     summary = (sustained_summary(sustained_case.get("series", []), sampling_status=timing)
                if limited_windows else result.get("sustained_summary") or sustained_summary([]))
@@ -957,7 +960,7 @@ def render_report(result, output, language, text, requested_format="html", compa
             )
         )
     cache_bytes = assessment.get("cache_capacity_estimate_bytes")
-    if cache_bytes is not None or result.get("tool", {}).get("method_version") not in AUTO_METHODS:
+    if cache_bytes is not None or result.get("tool", {}).get("method_version") not in (*AUTO_METHODS, PEAK_METHOD):
         cards.insert(
             min(2, len(cards)),
             card(

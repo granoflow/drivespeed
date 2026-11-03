@@ -4,6 +4,7 @@ import json
 import math
 import statistics
 
+PEAK_METHOD = "drivespeed-peak-v1"
 AUTO_METHOD = "drivespeed-auto-full-v2"
 AUTO_METHODS = ("drivespeed-auto-full-v1", AUTO_METHOD)
 QUICK_METHOD = "drivespeed-quick-v2"
@@ -229,7 +230,7 @@ def plan(profile, file_bytes=None, write_budget=None, seconds=None, sustained=No
     return config
 
 
-def auto_plan(total_bytes, free_bytes, run_cap, remaining_cap):
+def auto_plan(total_bytes, free_bytes, run_cap, remaining_cap, file_bytes=None, case_write_bytes=None):
     """Freeze a bounded full plan; authorization is supplied by the write ledger."""
     for value in (total_bytes, free_bytes, run_cap, remaining_cap):
         if type(value) is not int or not 0 <= value <= 2**64 - 1:
@@ -239,10 +240,23 @@ def auto_plan(total_bytes, free_bytes, run_cap, remaining_cap):
     budget = min(run_cap, remaining_cap)
     reserve = max(10 * GIB, (total_bytes + 9) // 10)
     available = max(0, free_bytes - reserve - 64 * MIB)
-    size = min(8 * GIB, (4 * available) // 5, budget // 4) // MIB * MIB
+    if file_bytes is None:
+        size = min(8 * GIB, (4 * available) // 5, budget // 4) // MIB * MIB
+    else:
+        if (type(file_bytes) is not int or file_bytes % MIB
+                or file_bytes < GIB or file_bytes > available
+                or file_bytes > budget // 4):
+            raise ValueError("Working file must fit available space and one quarter of the write budget")
+        size = file_bytes
     if size < GIB or budget < 8 * GIB:
         raise ValueError("Insufficient free space or authorized bytes for a complete test")
-    ordinary = min(size, budget // 20) // MIB * MIB
+    if case_write_bytes is None:
+        ordinary = min(size, budget // 20) // MIB * MIB
+    else:
+        if (type(case_write_bytes) is not int or case_write_bytes < MIB
+                or case_write_bytes % MIB or case_write_bytes > budget // 5):
+            raise ValueError("Case write limit must be MiB-aligned and fit the write budget")
+        ordinary = case_write_bytes
     sustained = (budget - 5 * ordinary) // MIB * MIB
     if sustained < size:
         raise ValueError("Write allowance cannot initialize the working file")
@@ -260,6 +274,48 @@ def auto_plan(total_bytes, free_bytes, run_cap, remaining_cap):
         max_write_bytes=sustained + 5 * ordinary,
         max_runtime_seconds=sum(job["runtime"] + 45 for job in jobs),
     )
+    return config
+
+
+def peak_plan(total_bytes, free_bytes, write_budget, file_bytes,
+              case_write_bytes, peak_io_bytes, seconds=20):
+    """Freeze every possible scan job and its worst-case write reservation."""
+    for value in (peak_io_bytes, seconds):
+        if type(value) is not int or value <= 0:
+            raise ValueError("Peak I/O and duration must be positive integers")
+    if peak_io_bytes % MIB:
+        raise ValueError("Peak I/O must be MiB-aligned")
+    config = auto_plan(total_bytes, free_bytes, write_budget, write_budget,
+                       file_bytes, case_write_bytes)
+    peak_writes = 12 * peak_io_bytes
+    sustained = write_budget - file_bytes - 5 * case_write_bytes - peak_writes
+    sustained = sustained // MIB * MIB
+    if sustained < file_bytes:
+        raise ValueError("Write budget cannot cover initialization, scanning and sustained write")
+
+    init = dict(name="prepare", rw="write", bs=MIB, qd=16,
+                io_bytes=file_bytes, runtime=900, require_complete=True)
+    base = config["jobs"]
+    sustained_job = next(job for job in base if job["name"] == "sustained")
+    sustained_job.update(io_bytes=sustained, initialize_bytes=file_bytes)
+    short_jobs = [job for job in base if job["name"] != "sustained"]
+    scans = []
+    for workload, rw, bs in (("seq_read", "read", MIB),
+                             ("seq_write", "write", MIB),
+                             ("rand_read", "randread", 4096),
+                             ("rand_write", "randwrite", 4096)):
+        for depth in (16, 32, 64):
+            for repeat in (1, 2):
+                scans.append(dict(name=f"peak_{workload}_{depth}_{repeat}",
+                                  rw=rw, bs=bs, qd=depth, io_bytes=peak_io_bytes,
+                                  runtime=seconds, peak_workload=workload))
+    jobs = [init] + short_jobs + scans + [sustained_job]
+    config.update(method_version=PEAK_METHOD, jobs=jobs,
+                  peak_criteria={"minimum_seconds": 5, "tolerance": 0.05,
+                                 "minimum_depth_percent": 25},
+                  max_write_bytes=file_bytes + 5 * case_write_bytes
+                  + peak_writes + sustained,
+                  max_runtime_seconds=sum(job["runtime"] + 45 for job in jobs))
     return config
 
 
@@ -606,7 +662,7 @@ def case_core_missing(case, job, config):
             written = 0
         if written < config.get("file_bytes", 0):
             missing.append("sustained.initialization")
-        if config.get("method_version") == AUTO_METHOD:
+        if config.get("method_version") in (AUTO_METHOD, PEAK_METHOD):
             assessed = cache_assessment(case.get("series", []), sampling_status=collection_status(case))
             speed = assessed.get("post_cache_mb_s")
             if (collection_status(case) != "collected" or assessed["status"] != "observed_drop_stable"
@@ -615,7 +671,7 @@ def case_core_missing(case, job, config):
         if written < job["io_bytes"] and not (
             case.get("stop_reason") == "post_drop_stable"
             and cache_assessment(case.get("series", []), sampling_status=collection_status(case)
-                                 if config.get("method_version") in AUTO_METHODS else None)["status"] == "observed_drop_stable"
+                                 if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD) else None)["status"] == "observed_drop_stable"
         ):
             missing.append("sustained.endpoint")
     transferred = sum(data.get(d, {}).get("bytes", 0) for d in ("read", "write")
@@ -625,6 +681,87 @@ def case_core_missing(case, job, config):
     if name != "sustained" and transferred < job["io_bytes"] and ((job.get("require_complete") and config.get("method_version") == QUICK_METHOD) or active_runtime_ms(data, job["rw"]) < job["runtime"] * 1000):
         missing.append(f"{name}.endpoint")
     return missing
+
+
+def peak_completeness(result):
+    """Qualify the base workload and peak evidence against the frozen plan."""
+    from peak_analysis import assess_peak_scan
+
+    plan = result.get("plan", {})
+    jobs = plan.get("jobs", [])
+    cases = result.get("cases", [])
+    expected = {job["name"]: job for job in jobs}
+    observed = {case["name"]: case for case in cases}
+    missing = []
+    base_names = {"prepare", "seq_read", "seq_write", "seq_read_q", "seq_write_q",
+                  "rand_read", "rand_write", "rand_read_q", "rand_write_q",
+                  "mixed", "sustained_read", "sustained"}
+    scan_names = {f"peak_{workload}_{depth}_{repeat}"
+                  for workload in ("seq_read", "seq_write", "rand_read", "rand_write")
+                  for depth in (16, 32, 64) for repeat in (1, 2)}
+    if (plan.get("method_version") != PEAK_METHOD
+            or result.get("tool", {}).get("method_version") != PEAK_METHOD
+            or len(jobs) != len(expected) or set(expected) != base_names | scan_names
+            or len(cases) != len(observed)):
+        missing.append("plan.jobs")
+    criteria = {"minimum_seconds": 5, "tolerance": 0.05, "minimum_depth_percent": 25}
+    if plan.get("peak_criteria") != criteria:
+        missing.append("plan.peak_criteria")
+    specs = {
+        "prepare": ("write", MIB, 16), "seq_read": ("read", MIB, 1),
+        "seq_write": ("write", MIB, 1), "seq_read_q": ("read", MIB, 16),
+        "seq_write_q": ("write", MIB, 16), "rand_read": ("randread", 4096, 1),
+        "rand_write": ("randwrite", 4096, 1), "rand_read_q": ("randread", 4096, 16),
+        "rand_write_q": ("randwrite", 4096, 16), "mixed": ("randrw", 4096, 16),
+        "sustained_read": ("read", MIB, 16), "sustained": ("write", MIB, 16),
+    }
+    for workload in ("seq_read", "seq_write", "rand_read", "rand_write"):
+        direction, block, _ = specs[workload]
+        for depth in (16, 32, 64):
+            for repeat in (1, 2):
+                specs[f"peak_{workload}_{depth}_{repeat}"] = (direction, block, depth)
+    for name, job in expected.items():
+        if name not in specs or (job.get("rw"), job.get("bs"), job.get("qd")) != specs[name]:
+            missing.append(name + ".plan_workload")
+    write_sizes = [job.get("io_bytes") for job in jobs
+                   if job.get("rw") not in ("read", "randread")]
+    if (any(type(size) is not int or size <= 0 for size in write_sizes)
+            or type(plan.get("max_write_bytes")) is not int
+            or type(plan.get("write_budget")) is not int
+            or sum(size for size in write_sizes if type(size) is int) != plan.get("max_write_bytes")
+            or plan.get("max_write_bytes", 0) > plan.get("write_budget", 0)):
+        missing.append("plan.write_budget")
+    for name in base_names:
+        if name not in observed or name not in expected:
+            missing.append(name + ".missing")
+            continue
+        missing.extend(case_core_missing(observed[name], expected[name], plan))
+        if name in base_names - {"prepare", "mixed", "sustained_read", "sustained"}:
+            case = observed[name]
+            if (active_runtime_ms(case.get("metrics", {}), case.get("rw")) < 5000
+                    or collection_status(case) != "collected"):
+                missing.append(name + ".sampling")
+    for name in scan_names:
+        if name not in observed or name not in expected:
+            missing.append(name + ".missing")
+            continue
+        case = observed[name]
+        job = expected[name]
+        if case.get("status") == "skipped" and case.get("reason") == "peak_plateau":
+            from peak_analysis import assess_peak_pair
+            workload = job.get("peak_workload")
+            names = [f"peak_{workload}_{depth}_{repeat}"
+                     for depth in (16, 32) for repeat in (1, 2)]
+            if (job.get("qd") == 64 and all(key in observed for key in names)
+                    and assess_peak_pair([observed[key] for key in names],
+                                         **criteria)["status"] == "plateau"
+                    and all(case.get(key) == job[key] for key in ("rw", "bs", "qd"))):
+                continue
+        missing.extend(case_core_missing(case, job, plan))
+    assessment = assess_peak_scan(cases, **criteria)
+    if assessment["status"] != "complete":
+        missing.append("peak.plateau")
+    return {"complete": not missing, "missing_core": sorted(set(missing))}
 
 
 def core_completeness(result):

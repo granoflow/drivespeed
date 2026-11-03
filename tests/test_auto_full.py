@@ -12,7 +12,7 @@ import tempfile
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from workloads import GIB, MIB, auto_plan, core_completeness, collection_status, metrics, active_runtime_ms, case_core_missing
+from workloads import GIB, MIB, auto_plan, peak_plan, peak_completeness, core_completeness, collection_status, metrics, active_runtime_ms, case_core_missing
 import benchmark
 import system_io
 from progress import messages
@@ -53,6 +53,41 @@ class AutomaticPlanTests(unittest.TestCase):
             self.assertGreaterEqual(config["jobs"][0]["io_bytes"], config["file_bytes"])
         self.assertEqual(auto_plan(100 * GIB, 20 * GIB, 64 * GIB, 16 * GIB)["write_budget"], 16 * GIB)
 
+    def test_explicit_working_file_respects_space_and_budget(self):
+        config = auto_plan(100 * GIB, 80 * GIB, 128 * GIB, 128 * GIB, 20 * GIB)
+        self.assertEqual(config["file_bytes"], 20 * GIB)
+        self.assertLessEqual(config["max_write_bytes"], 128 * GIB)
+        for size in (0, True, GIB + 1, 33 * GIB, 80 * GIB):
+            with self.subTest(size=size), self.assertRaises(ValueError):
+                auto_plan(100 * GIB, 80 * GIB, 128 * GIB, 128 * GIB, size)
+
+    def test_explicit_case_write_limit_stays_inside_run_budget(self):
+        config = auto_plan(100 * GIB, 80 * GIB, 128 * GIB, 128 * GIB,
+                           20 * GIB, 16 * GIB)
+        self.assertEqual(config["max_write_bytes"], 128 * GIB)
+        cases = {job["name"]: job for job in config["jobs"]}
+        self.assertEqual(cases["seq_write_q"]["io_bytes"], 16 * GIB)
+        self.assertEqual(cases["sustained"]["io_bytes"], 48 * GIB)
+        for limit in (0, True, MIB + 1, 25 * GIB, 30 * GIB):
+            with self.subTest(limit=limit), self.assertRaises(ValueError):
+                auto_plan(100 * GIB, 80 * GIB, 128 * GIB, 128 * GIB,
+                          20 * GIB, limit)
+
+    def test_peak_plan_reserves_every_write_and_initializes_before_reads(self):
+        config = peak_plan(1000 * GIB, 700 * GIB, 512 * GIB,
+                           20 * GIB, 16 * GIB, 8 * GIB)
+        jobs = config["jobs"]
+        self.assertEqual(jobs[0]["name"], "prepare")
+        self.assertEqual(jobs[-1]["name"], "sustained")
+        self.assertEqual(len([job for job in jobs if job["name"].startswith("peak_")]), 24)
+        self.assertEqual(sum(job["io_bytes"] for job in jobs
+                             if job["rw"] not in ("read", "randread")),
+                         config["max_write_bytes"])
+        self.assertLessEqual(config["max_write_bytes"], config["write_budget"])
+        with self.assertRaises(ValueError):
+            peak_plan(1000 * GIB, 700 * GIB, 128 * GIB,
+                      20 * GIB, 16 * GIB, 8 * GIB)
+
     def test_unavailable_space_budget_and_invalid_inputs_fail(self):
         for values in ((100 * GIB, 10 * GIB, 64 * GIB, 64 * GIB),
                        (100 * GIB, 20 * GIB, 7 * GIB, 64 * GIB),
@@ -72,6 +107,39 @@ class AutomaticPlanTests(unittest.TestCase):
             config = auto_plan(100 * GIB, free, 64 * GIB, 64 * GIB)
             self.assertEqual(config["file_bytes"] % MIB, 0)
             self.assertLessEqual(config["file_bytes"], 4 * (free - 10 * GIB - 64 * MIB) // 5)
+
+
+class PeakCompletenessTests(unittest.TestCase):
+    def test_scan_skip_requires_a_verified_plateau(self):
+        config = peak_plan(1000 * GIB, 700 * GIB, 512 * GIB,
+                           20 * GIB, 16 * GIB, 8 * GIB)
+        cases = [dict(job, status="completed", metrics={})
+                 for job in config["jobs"]]
+        result = {"plan": config, "tool": {"method_version": config["method_version"]},
+                  "cases": cases}
+        skipped = next(item for item in cases if item["name"] == "peak_seq_read_64_1")
+        skipped.update(status="skipped", reason="peak_plateau")
+        with patch("workloads.case_core_missing", return_value=[]), \
+             patch("workloads.active_runtime_ms", return_value=5000), \
+             patch("workloads.collection_status", return_value="collected"), \
+             patch("peak_analysis.assess_peak_scan", return_value={"status": "complete"}), \
+             patch("peak_analysis.assess_peak_pair", return_value={"status": "plateau"}):
+            self.assertTrue(peak_completeness(result)["complete"])
+            altered = copy.deepcopy(result)
+            altered["plan"]["peak_criteria"]["tolerance"] = 0.9
+            self.assertIn("plan.peak_criteria", peak_completeness(altered)["missing_core"])
+            altered = copy.deepcopy(result)
+            altered["plan"]["jobs"][0]["io_bytes"] += MIB
+            self.assertIn("plan.write_budget", peak_completeness(altered)["missing_core"])
+            altered = copy.deepcopy(result)
+            altered["plan"]["jobs"][0]["qd"] = 1
+            self.assertIn("prepare.plan_workload", peak_completeness(altered)["missing_core"])
+        with patch("workloads.case_core_missing", return_value=["bad"]), \
+             patch("workloads.active_runtime_ms", return_value=5000), \
+             patch("workloads.collection_status", return_value="collected"), \
+             patch("peak_analysis.assess_peak_scan", return_value={"status": "complete"}), \
+             patch("peak_analysis.assess_peak_pair", return_value={"status": "increase"}):
+            self.assertFalse(peak_completeness(result)["complete"])
 
 
 class EvidenceTests(unittest.TestCase):
@@ -427,6 +495,62 @@ class EntryAndQualityTests(unittest.TestCase):
             self.assertEqual(result["cases"][6]["collection_status"],"collected_irregular")
             self.assertTrue(all(c["status"]=="completed" for c in result["cases"]))
             self.assertIn("sampling_irregular",result["notes"])
+
+    def test_peak_execution_skips_only_verified_deeper_cases_and_accounts_writes(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            target = AuthorizationTests().target()
+            target.update(path=str(root / "target"), total_bytes=1000 * GIB,
+                          free_bytes=700 * GIB)
+            Path(target["path"]).mkdir()
+            output = root / "output"
+            args = benchmark.parser().parse_args([
+                "--target", target["path"], "--output", str(output), "--language", "en",
+                "--stage", "peak", "--propose-write-bytes", str(512 * GIB),
+                "--working-file-bytes", str(20 * GIB), "--case-write-bytes", str(16 * GIB),
+                "--peak-io-bytes", str(8 * GIB),
+            ])
+            def produced(fio, job, *unused):
+                active = ("read", "write") if job["rw"] == "randrw" else (
+                    "read" if job["rw"] in ("read", "randread") else "write",)
+                data = {"runtime_ms": 6000, "achieved_depth": {str(job["qd"]): 80}}
+                for direction in ("read", "write"):
+                    count = job["io_bytes"] // len(active) if direction in active else 0
+                    data[direction] = {"bytes": count, "runtime_ms": 6000,
+                                       "mb_s": 100 if count else 0, "iops": 100 if count else 0,
+                                       "latency_us": {key: 10 for key in ("mean", "50", "95", "99")}}
+                series = [dict(seconds=t, mb_s=100, direction=d)
+                          for d in active for t in range(1, 7)]
+                return dict(**job, status="completed", metrics=data, series=series,
+                            collection_status="collected", metrics_complete=True)
+            stable = {"status": "observed_drop_stable", "post_cache_mb_s": 100,
+                      "cache_capacity_estimate_bytes": None}
+            with patch.object(benchmark, "target_info", return_value=target), \
+                 patch.object(benchmark, "check_target", return_value=target), \
+                 patch.object(benchmark, "collect_hardware", return_value={}), \
+                 patch.object(benchmark, "load_reference_cache", return_value=({}, {})), \
+                 patch.object(benchmark, "apply_hardware_specs"), \
+                 patch.object(benchmark, "DeviceLock", return_value=contextlib.nullcontext()), \
+                 patch.object(benchmark, "clean_stale_workspaces", return_value=[]), \
+                 patch.object(benchmark, "ensure_fio", return_value={"path": "fixture", "engines": "posixaio"}), \
+                 patch.object(benchmark, "select_engine", return_value="posixaio"), \
+                 patch.object(benchmark, "observe_quality", return_value={"status": "quiet_observed"}), \
+                 patch.object(benchmark, "confirm_write", side_effect=lambda t,c,a,text: plan_hash(t,c,a)), \
+                 patch.object(benchmark.os, "ftruncate"), \
+                 patch.object(benchmark, "run_case", side_effect=produced) as producer, \
+                 patch.object(benchmark, "trash_owned"), \
+                 patch("workloads.cache_assessment", return_value=stable), \
+                 patch.object(benchmark, "cache_assessment", return_value=stable), \
+                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = benchmark.execute(args, messages("en"), messages("en"))
+            result = json.loads((output / "results.json").read_text())
+            self.assertTrue((output / "report.html").is_file())
+            self.assertEqual(code, 0, result["completeness"])
+            self.assertEqual(result["peak_assessment"]["status"], "complete")
+            self.assertEqual(producer.call_count, 28)
+            self.assertEqual(sum(case["status"] == "skipped" for case in result["cases"]), 8)
+            self.assertLess(result["actual_write_bytes"], result["plan"]["max_write_bytes"])
+            self.assertTrue(result["completeness"]["complete"])
 
     def test_removed_measurement_flags_reject_before_target_access(self):
         for flag, value in (("--profile", "full"), ("--file-size", "8GiB"),
