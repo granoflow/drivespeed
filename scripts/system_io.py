@@ -692,6 +692,50 @@ def workspace_identity(directory, target):
     return value
 
 
+def trashed_workspace_identity(directory, target, size):
+    """Inspect an explicitly selected, fully allocated owned macOS Trash payload."""
+    path = Path(directory).expanduser().absolute()
+    trash = Path.home() / '.Trash'
+    if (platform.system() != 'Darwin' or path.parent != trash
+            or not re.fullmatch(r'\.diskbench-[0-9a-f]{32}', path.name)
+            or unsafe_path_component(path)):
+        raise BenchError('unsafe_target', 'Invalid trashed test workspace')
+    try:
+        info = path.lstat()
+        if (not stat_module.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_dev != target['st_dev']):
+            raise ValueError('workspace identity')
+        entries = {item.name: item for item in path.iterdir()}
+        if set(entries) != {WORKSPACE_MARKER, 'README.txt', 'payload.bin'}:
+            raise ValueError('unexpected workspace contents')
+        for item in entries.values():
+            current = item.lstat()
+            if (not stat_module.S_ISREG(current.st_mode) or current.st_uid != os.getuid()
+                    or current.st_dev != info.st_dev or current.st_nlink != 1):
+                raise ValueError('unsafe workspace entry')
+        if entries[WORKSPACE_MARKER].stat().st_size > 4096:
+            raise ValueError('oversized workspace marker')
+        fd = os.open(entries[WORKSPACE_MARKER], os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+        with os.fdopen(fd, encoding='utf-8') as stream:
+            marker = json.loads(stream.read(4097))
+        payload = entries['payload.bin'].lstat()
+        if (not isinstance(marker, dict) or marker.get('tool') != 'drivespeed-workspace-v1'
+                or marker.get('run_id') != path.name.removeprefix('.diskbench-')
+                or marker.get('workspace_inode') != info.st_ino
+                or marker.get('target_path') != target['path']
+                or marker.get('target_inode') != target['inode']
+                or marker.get('target_device') != target['st_dev']
+                or marker.get('retain') is not False
+                or type(size) is not int or payload.st_size != size
+                or payload.st_blocks * 512 < size):
+            raise ValueError('marker or allocation mismatch')
+        return dict(path=str(path), workspace_inode=info.st_ino,
+                    payload_inode=payload.st_ino, payload_bytes=size,
+                    target_device=info.st_dev)
+    except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
+        raise BenchError('unsafe_target', 'Invalid trashed test workspace') from exc
+
+
 def clean_stale_workspaces(target):
     """Called only under the physical-device lock, never during dry-run."""
     outcomes = []

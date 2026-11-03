@@ -10,6 +10,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -32,6 +33,7 @@ from system_io import (
     trash_owned,
     mark_workspace,
     clean_stale_workspaces,
+    trashed_workspace_identity,
     stop_process,
     unsafe_path_component,
     observe_quality,
@@ -58,6 +60,39 @@ from write_allowance import RunWriteProtection as WriteAllowance, plan_hash
 from run_deadline import RunDeadline
 
 
+class ReuseSpaceGuard:
+    """Stop this fio process group if reused-file writes consume safety space."""
+    def __init__(self, proc, path, minimum):
+        self.proc, self.path, self.minimum = proc, path, minimum
+        self.stop = threading.Event()
+        self.failed = threading.Event()
+        self.thread = threading.Thread(target=self._watch, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def _watch(self):
+        while not self.stop.is_set():
+            try:
+                fs = os.statvfs(self.path)
+                if fs.f_bavail * fs.f_frsize >= self.minimum:
+                    if self.stop.wait(.1):
+                        return
+                    continue
+            except OSError:
+                pass
+            self.failed.set()
+            try:
+                os.killpg(self.proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            return
+
+    def close(self):
+        self.stop.set()
+        self.thread.join()
+
+
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
@@ -78,6 +113,7 @@ def parser():
                    help="MiB-aligned per-case write limit for full measurements")
     p.add_argument("--peak-io-bytes", type=int,
                    help="MiB-aligned byte limit for each queue-depth scan")
+    p.add_argument("--reuse-trashed-workspace", help="Explicitly reuse an owned, fully allocated macOS Trash workspace on this target")
     p.add_argument("--stage", choices=("quick", "full", "peak"), default="full",
                    help="Quick actual sequential measurement, or deeper full test; legacy CLI default is full")
     p.add_argument("--quick-from", help="Preserve a same-target quick result alongside the deeper test; never rerun it")
@@ -238,6 +274,10 @@ def run_case(fio, job, config, engine, output, work, target, progress):
         (work / "payload.bin").stat().st_dev,
         (work / "payload.bin").stat().st_ino,
     )
+    reused = config.get('reuse_workspace')
+    if reused and (identity != (reused['target_device'], reused['workspace_inode'])
+                   or file_identity != (reused['target_device'], reused['payload_inode'])):
+        raise BenchError('unsafe_target', 'Reused test file identity changed')
     check_target(target, config["reserve_bytes"])
     check_owned(work, identity, file_identity)
     if deadline is not None:
@@ -251,14 +291,21 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             stderr=stderr,
             start_new_session=platform.system() != "Windows",
         )
+        guard = ReuseSpaceGuard(proc, target['path'], config['reserve_bytes'] + GIB) if reused else None
         try:
+            if guard:
+                guard.start()
             if deadline is not None:
                 deadline.attach(proc)
             while proc.poll() is None:
                 if deadline is not None:
                     deadline.check()
+                if reused:
+                    space = os.statvfs(target['path'])
+                    if space.f_bavail * space.f_frsize < config['reserve_bytes'] + GIB:
+                        raise BenchError('space_failed', 'Reuse safety headroom reached')
                 if time.monotonic() - last_sensor >= 5:
-                    sensor = check_target(target, config["reserve_bytes"])
+                    sensor = check_target(target, config["reserve_bytes"] + (GIB if reused else 0))
                     case["temperatures"].append(
                         dict(
                             seconds=round(time.monotonic() - start, 2),
@@ -340,9 +387,11 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                     )
                 else:
                     progress.emit(job["name"])
-                time.sleep(1)
+                time.sleep(.1 if config.get("reuse_workspace") else 1)
             if deadline is not None:
                 deadline.check()
+            if guard and guard.failed.is_set():
+                raise BenchError('space_failed', 'Reuse safety headroom reached')
             if proc.returncode and not (
                 cache_stop_requested is not None
                 and proc.returncode in (-signal.SIGINT, 128 + signal.SIGINT)
@@ -393,6 +442,11 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                 detail=str(exc),
             )
         finally:
+            if guard and guard.thread.ident is not None:
+                guard.close()
+                if guard.failed.is_set() and case['status'] == 'completed':
+                    case.update(status='failed', reason='space_failed',
+                                detail='Reuse safety headroom reached')
             stop_process(proc)
             if deadline is not None:
                 deadline.detach(proc)
@@ -473,6 +527,9 @@ def load_quick_source(filename, target):
 
 
 def execute(args, text, report_text):
+    reuse_path = getattr(args, 'reuse_trashed_workspace', None)
+    if reuse_path and (args.stage != 'peak' or args.working_file_bytes is None or args.keep_test_files):
+        raise ValueError('Trash reuse requires peak stage, an exact working file size, and default cleanup')
     if args.stage == "quick" and (args.peak_io_bytes is not None or args.capacity_from or args.propose_write_bytes is not None or args.quick_from or args.working_file_bytes is not None or args.case_write_bytes is not None):
         raise ValueError("Quick measurements do not take deeper-test or capacity options")
     if args.capacity_from and (args.propose_write_bytes is not None or args.working_file_bytes is not None or args.case_write_bytes is not None):
@@ -488,6 +545,7 @@ def execute(args, text, report_text):
         load_reference_data(args.reference_file) if args.reference_file else {}
     )
     target = target_info(args.target)
+    reuse = trashed_workspace_identity(reuse_path, target, args.working_file_bytes) if reuse_path else None
     ledger = WriteAllowance()
     allowance = ledger.read(target)
     capacity_source = None
@@ -498,9 +556,13 @@ def execute(args, text, report_text):
         if args.stage == "quick":
             return quick_plan(target)
         if args.stage == "peak":
-            return peak_plan(target["total_bytes"], target["free_bytes"],
+            effective_free = min(target["total_bytes"], target["free_bytes"] + (reuse['payload_bytes'] if reuse else 0))
+            plan = peak_plan(target["total_bytes"], effective_free,
                              args.propose_write_bytes, args.working_file_bytes,
                              args.case_write_bytes, args.peak_io_bytes)
+            if reuse:
+                plan['reuse_workspace'] = reuse
+            return plan
         if capacity_source is not None:
             return capacity_plan(target, allowance, capacity_source)
         return normal_plan(target, allowance, args.propose_write_bytes,
@@ -535,9 +597,10 @@ def execute(args, text, report_text):
     text = dict(text)
     for job in config["jobs"]:
         text[job["name"]] = job_label(job, text)
-    if target["free_bytes"] < config["file_bytes"] + config["reserve_bytes"]:
+    required_free = config["reserve_bytes"] + (GIB if reuse else config["file_bytes"])
+    if target["free_bytes"] < required_free:
         raise BenchError(
-            "space_failed", str(config["file_bytes"] + config["reserve_bytes"])
+            "space_failed", str(required_free)
         )
     if args.dry_run:
         print(
@@ -549,7 +612,7 @@ def execute(args, text, report_text):
                     plan=config,
                     plan_sha256=plan_hash(target, config, allowance),
                     write_authorization=allowance,
-                    cleanup_policy="retain_owned_files" if args.keep_test_files or platform.system() == "Windows" else "system_trash",
+                    cleanup_policy="already_in_system_trash" if reuse else "retain_owned_files" if args.keep_test_files or platform.system() == "Windows" else "system_trash",
                     language=args.language,
                     ui_language=args.ui_language,
                 ),
@@ -647,21 +710,22 @@ def execute(args, text, report_text):
             ledger.reserve(target, config, allowance, run_id, confirmed)
             reserved = True
             result["write_authorization"] = dict(plan_sha256=confirmed, reserved_bytes=config["max_write_bytes"])
-            check_target(target, config["file_bytes"] + config["reserve_bytes"] + config["metadata_headroom_bytes"])
-            candidate = Path(target["path"]) / f".diskbench-{run_id}"
-            candidate.mkdir(mode=0o700)
-            work = candidate
+            check_target(target, config["reserve_bytes"] + (GIB if reuse else config["file_bytes"] + config["metadata_headroom_bytes"]))
+            if reuse:
+                if trashed_workspace_identity(reuse_path, target, config['file_bytes']) != reuse:
+                    raise BenchError('unsafe_target', 'Trashed workspace changed after preview')
+                work = Path(reuse['path'])
+            else:
+                candidate = Path(target["path"]) / f".diskbench-{run_id}"
+                candidate.mkdir(mode=0o700)
+                work = candidate
+                mark_workspace(work, target, run_id, retain=args.keep_test_files or platform.system() == "Windows")
+                fd = os.open(work / "payload.bin", os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), 0o600)
+                try:
+                    os.ftruncate(fd, config["file_bytes"])
+                finally:
+                    os.close(fd)
             result["test_directory"] = str(work)
-            mark_workspace(work, target, run_id, retain=args.keep_test_files or platform.system() == "Windows")
-            fd = os.open(
-                work / "payload.bin",
-                os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
-                0o600,
-            )
-            try:
-                os.ftruncate(fd, config["file_bytes"])
-            finally:
-                os.close(fd)
             for job in config["jobs"]:
                 deadline.check()
                 if (config.get("method_version") == PEAK_METHOD
@@ -747,7 +811,9 @@ def execute(args, text, report_text):
                 deadline.close()
             if work:
                 try:
-                    if args.keep_test_files or platform.system() == "Windows":
+                    if reuse:
+                        result["notes"].append("trash_note")
+                    elif args.keep_test_files or platform.system() == "Windows":
                         result["notes"].append("retain_note")
                     else:
                         trash_owned(work, target)

@@ -590,6 +590,30 @@ class EntryAndQualityTests(unittest.TestCase):
             for operation in (install, lock, observe, command, cleanup):
                 operation.assert_not_called()
 
+    def test_peak_reuse_dry_run_binds_identity_and_preserves_write_budget(self):
+        args = benchmark.parser().parse_args([
+            '--target', '/unused', '--stage', 'peak', '--dry-run',
+            '--working-file-bytes', str(32 * GIB), '--propose-write-bytes', str(512 * GIB),
+            '--case-write-bytes', str(16 * GIB), '--peak-io-bytes', str(8 * GIB),
+            '--reuse-trashed-workspace', '/trash/owned'])
+        target = AuthorizationTests().target()
+        target.update(total_bytes=100 * GIB, free_bytes=18 * GIB)
+        reuse = dict(path='/trash/owned', workspace_inode=10, payload_inode=11,
+                     payload_bytes=32 * GIB, target_device=target['st_dev'])
+        output = io.StringIO()
+        with patch.object(benchmark, 'target_info', return_value=target), \
+             patch.object(benchmark, 'trashed_workspace_identity', return_value=reuse), \
+             patch.object(benchmark, 'collect_hardware', return_value={}), \
+             patch.object(benchmark, 'load_reference_cache', return_value=({}, {})), \
+             patch.object(benchmark, 'apply_hardware_specs'), \
+             patch.object(benchmark, 'DeviceLock') as lock, contextlib.redirect_stdout(output):
+            self.assertEqual(benchmark.execute(args, messages('en'), messages('en')), 0)
+        preview = json.loads(output.getvalue())
+        self.assertEqual(preview['plan']['reuse_workspace'], reuse)
+        self.assertEqual(preview['plan']['max_write_bytes'], 512 * GIB)
+        self.assertEqual(preview['cleanup_policy'], 'already_in_system_trash')
+        lock.assert_not_called()
+
     def test_two_windows_and_boot_counter_quality(self):
         self.assertEqual(system_io.quality_from_windows([0, 0], "fixture")["status"], "quiet_observed")
         self.assertEqual(system_io.quality_from_windows([30, 30], "fixture")["status"], "visibility_limited")
