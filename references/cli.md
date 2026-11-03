@@ -22,7 +22,9 @@ python3 scripts/benchmark.py --disk /path/to/selected-volume --stage quick --out
 
 可用 `--peak-source <原始 results.json>` 关联同一目标的旧峰值运行：预演把源文件摘要与运行 ID 纳入确认，执行前核对设备指纹、工作文件大小、引擎和 fio 版本。结果会比较旧运行的合格单次成绩与本次重复样本，提示旧成绩显著更高的负载；两次运行的设备状态仍须单独判断，比较不会改写或合并源记录。
 
-macOS 空间不足时，`--reuse-trashed-workspace <绝对路径>` 可指定本用户废纸篓内属于同一目标的 DriveSpeed 专属工作目录。只接受标记、目标、inode、目录内容和完整已分配容量均匹配的文件；预演绑定这些身份并计入实际空闲空间和额外 1 GiB 写入安全余量。执行时在设备锁内重新核对，初始化与覆盖仍计入写入预算；运行期间监控空闲空间，触及余量即停止。文件直接留在废纸篓，不恢复其他文件、不清空废纸篓。仅 peak 或 peak-supplement 且必须给出与原文件完全一致的 `--working-file-bytes`。
+`--stage cache-supplement` 单独观察持续写入，显式指定 `--propose-write-bytes`、`--working-file-bytes` 和 `--cache-runtime-seconds`（至少 105 秒）。同一条连续写入既初始化专属文件又进行观察，写入预算计入全部覆盖；符合既有降速与稳定窗口判据时可提前结束。可选 `--peak-source` 绑定原运行和同一设备条件。无可确认降速、采样不足或预算先到时保留实际曲线并标为未确认，不推断缓存耗尽。输出独立 `results.json`，不生成完整报告或合并旧运行，退出码 6 表示完整评测仍未完成。链路可能遮蔽降速时不要仅为取得数字而重复写入。
+
+macOS 空间不足时，`--reuse-trashed-workspace <绝对路径>` 可指定本用户废纸篓内属于同一目标的 DriveSpeed 专属工作目录。只接受标记、目标、inode、目录内容和完整已分配容量均匹配的文件；预演绑定这些身份并计入实际空闲空间和额外 1 GiB 写入安全余量。执行时在设备锁内重新核对，初始化与覆盖仍计入写入预算；运行期间监控空闲空间，触及余量即停止。文件直接留在废纸篓，不恢复其他文件、不清空废纸篓。仅 peak、peak-supplement 或 cache-supplement 且必须给出与原文件完全一致的 `--working-file-bytes`。
 
 ## 阶段、确认与单次保护
 

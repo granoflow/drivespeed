@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run bounded file-based fio tests. Standard library only, Python 3.10+."""
 
-from workloads import AUTO_METHODS, PEAK_METHOD, PEAK_SUPPLEMENT_METHOD, QUICK_METHODS, quick_plan
+from workloads import AUTO_METHODS, CACHE_SUPPLEMENT_METHOD, PEAK_METHOD, PEAK_SUPPLEMENT_METHOD, QUICK_METHODS, quick_plan
 import argparse
 import json
 import os
@@ -51,6 +51,7 @@ from workloads import (
     auto_plan,
     peak_plan,
     peak_supplement_plan,
+    cache_supplement_plan,
     collection_status,
     core_completeness,
     peak_completeness,
@@ -117,8 +118,9 @@ def parser():
     p.add_argument("--peak-io-bytes", type=int,
                    help="MiB-aligned byte limit for each queue-depth scan")
     p.add_argument("--reuse-trashed-workspace", help="Explicitly reuse an owned, fully allocated macOS Trash workspace on this target")
-    p.add_argument("--stage", choices=("quick", "full", "peak", "peak-supplement"), default="full",
+    p.add_argument("--stage", choices=("quick", "full", "peak", "peak-supplement", "cache-supplement"), default="full",
                    help="Quick actual sequential measurement, or deeper full test; legacy CLI default is full")
+    p.add_argument("--cache-runtime-seconds", type=int, help="Finite duration for a separate cache observation")
     p.add_argument("--supplement-workload", action="append", choices=("seq_read", "seq_write", "rand_read", "rand_write"),
                    help="Peak supplement workload; repeat for each required workload")
     p.add_argument("--supplement-io-bytes", action="append", metavar="WORKLOAD=BYTES",
@@ -356,7 +358,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                                     )
                                 )
                             last_elapsed, last_write_bytes = observed_seconds, written
-                        timing = collection_status(dict(rw="write", metrics=observed, series=cache_points)) if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD) else None
+                        timing = collection_status(dict(rw="write", metrics=observed, series=cache_points)) if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD, CACHE_SUPPLEMENT_METHOD) else None
                         assessment = cache_assessment(cache_points, sampling_status=timing)
                         if (
                             assessment["status"] == "observed_drop_stable"
@@ -417,7 +419,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             if not objects:
                 raise ValueError("fio produced no JSON measurements")
             case["metrics"] = metrics(objects[-1])
-            if job.get('cache_test') and config.get('method_version') == PEAK_METHOD:
+            if job.get('cache_test') and config.get('method_version') in (PEAK_METHOD, CACHE_SUPPLEMENT_METHOD):
                 case['cache_write_counters_v1'] = write_counter_samples(objects)
             completed = sum(case["metrics"][d]["bytes"] for d in ("read", "write"))
             if not completed:
@@ -432,7 +434,7 @@ def run_case(fio, job, config, engine, output, work, target, progress):
                 raise ValueError(
                     "Incomplete diagnostic coverage; refusing to claim a complete write/read verification"
                 )
-            tolerance = 0 if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD, PEAK_SUPPLEMENT_METHOD, "drivespeed-capacity-v1") else job["bs"] * job["qd"]
+            tolerance = 0 if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD, PEAK_SUPPLEMENT_METHOD, CACHE_SUPPLEMENT_METHOD, "drivespeed-capacity-v1") else job["bs"] * job["qd"]
             if completed > job["io_bytes"] + tolerance:
                 raise ValueError("Reported I/O exceeds the planned bound")
             case["status"] = "completed"
@@ -473,10 +475,10 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             case["metrics_complete"] = case["status"] == "completed"
             for path in output.glob(f"{job['name']}_bw.*.log"):
                 try:
-                    case["series"].extend(bandwidth_series(path, strict=config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD, PEAK_SUPPLEMENT_METHOD)))
+                    case["series"].extend(bandwidth_series(path, strict=config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD, PEAK_SUPPLEMENT_METHOD, CACHE_SUPPLEMENT_METHOD)))
                 except (OSError, ValueError) as exc:
                     case["collection_error"] = str(exc)
-            if config.get("method_version") in (*AUTO_METHODS, *QUICK_METHODS, PEAK_METHOD, PEAK_SUPPLEMENT_METHOD):
+            if config.get("method_version") in (*AUTO_METHODS, *QUICK_METHODS, PEAK_METHOD, PEAK_SUPPLEMENT_METHOD, CACHE_SUPPLEMENT_METHOD):
                 case["collection_status"] = collection_status(case)
                 missing = case_core_missing(case, job, config)
                 if missing and case["status"] == "completed":
@@ -540,19 +542,27 @@ def load_quick_source(filename, target):
 
 def execute(args, text, report_text):
     reuse_path = getattr(args, 'reuse_trashed_workspace', None)
-    if reuse_path and (args.stage not in ('peak', 'peak-supplement') or args.working_file_bytes is None or args.keep_test_files):
-        raise ValueError('Trash reuse requires a peak stage, an exact working file size, and default cleanup')
+    if reuse_path and (args.stage not in ('peak', 'peak-supplement', 'cache-supplement') or args.working_file_bytes is None or args.keep_test_files):
+        raise ValueError('Trash reuse requires a supported stage, an exact working file size, and default cleanup')
     supplement_workloads = getattr(args, 'supplement_workload', None)
     supplement_depths = getattr(args, 'supplement_depths', None)
     supplement_limits = getattr(args, 'supplement_io_bytes', None)
+    cache_duration = getattr(args, 'cache_runtime_seconds', None)
     peak_source_path = getattr(args, 'peak_source', None)
+    if args.stage == 'cache-supplement':
+        if (args.capacity_from or args.quick_from or args.case_write_bytes is not None
+                or args.peak_io_bytes is not None or args.propose_write_bytes is None
+                or args.working_file_bytes is None or cache_duration is None or args.format != 'html'):
+            raise ValueError('Cache supplement requires explicit write, file and duration bounds')
+    elif cache_duration is not None:
+        raise ValueError('Cache runtime requires cache-supplement stage')
     if args.stage == 'peak-supplement':
         if (args.capacity_from or args.quick_from or args.case_write_bytes is not None
                 or args.propose_write_bytes is None or args.working_file_bytes is None
                 or args.peak_io_bytes is None or not supplement_workloads or not supplement_depths
                 or args.format != 'html'):
             raise ValueError('Peak supplement requires explicit write, file, I/O, workloads and depths')
-    elif supplement_workloads is not None or supplement_depths is not None or supplement_limits is not None or peak_source_path is not None:
+    elif supplement_workloads is not None or supplement_depths is not None or supplement_limits is not None or (peak_source_path is not None and args.stage != 'cache-supplement'):
         raise ValueError('Supplement options require peak-supplement stage')
     overrides = {}
     for entry in supplement_limits or []:
@@ -594,6 +604,16 @@ def execute(args, text, report_text):
     def build_plan():
         if args.stage == "quick":
             return quick_plan(target)
+        if args.stage == 'cache-supplement':
+            effective_free = min(target['total_bytes'], target['free_bytes'] + (reuse['payload_bytes'] if reuse else 0))
+            result = cache_supplement_plan(target['total_bytes'], effective_free,
+                args.propose_write_bytes, args.working_file_bytes, cache_duration)
+            if reuse:
+                result['reuse_workspace'] = reuse
+            if peak_source is not None:
+                result['source_peak_sha256'] = peak_source_hash
+                result['source_peak_run_id'] = peak_source['run_id']
+            return result
         if args.stage == 'peak-supplement':
             effective_free = min(target['total_bytes'], target['free_bytes'] + (reuse['payload_bytes'] if reuse else 0))
             result = peak_supplement_plan(target['total_bytes'], effective_free,
@@ -918,7 +938,7 @@ def execute(args, text, report_text):
             if any(c.get("collection_status") == "collected_irregular" for c in result["cases"]):
                 result["notes"].append("sampling_irregular")
             points, timing = cache_observation(sustained)
-            if config.get("method_version") not in (*AUTO_METHODS, PEAK_METHOD):
+            if config.get("method_version") not in (*AUTO_METHODS, PEAK_METHOD, CACHE_SUPPLEMENT_METHOD):
                 timing = None
             result["sustained_summary"] = sustained_summary(points, sampling_status=timing)
             result["cache_assessment"] = cache_assessment(points, sampling_status=timing)
@@ -948,6 +968,8 @@ def execute(args, text, report_text):
                     result['peak_comparison'] = compare_peak_runs(peak_source, result)
                 # A separate diagnostic cannot make the prior full run complete.
                 result['completeness'] = {'complete': False, 'missing_core': ['full_run']}
+            elif config.get('method_version') == CACHE_SUPPLEMENT_METHOD:
+                result['completeness'] = {'complete':False, 'missing_core':['full_run']}
             elif capacity_source is not None:
                 from capacity_check import completeness
                 result["completeness"] = completeness(result)
@@ -964,7 +986,7 @@ def execute(args, text, report_text):
             if reserved:
                 ledger.settle(run_id, result["actual_write_bytes"])
             save(output / "results.json", result)
-    if config.get('method_version') == PEAK_SUPPLEMENT_METHOD:
+    if config.get('method_version') in (PEAK_SUPPLEMENT_METHOD, CACHE_SUPPLEMENT_METHOD):
         progress.emit('report', 'skipped', force=True)
         print(json.dumps(dict(outcome=result['outcome'], results=str(output / 'results.json'), report=None)))
         return error_code

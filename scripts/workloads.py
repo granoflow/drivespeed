@@ -6,6 +6,7 @@ import statistics
 
 PEAK_METHOD = "drivespeed-peak-v1"
 PEAK_SUPPLEMENT_METHOD = "drivespeed-peak-supplement-v1"
+CACHE_SUPPLEMENT_METHOD = "drivespeed-cache-supplement-v1"
 AUTO_METHOD = "drivespeed-auto-full-v2"
 AUTO_METHODS = ("drivespeed-auto-full-v1", AUTO_METHOD)
 QUICK_METHOD = "drivespeed-quick-v2"
@@ -372,6 +373,29 @@ def peak_supplement_plan(total_bytes, free_bytes, write_budget, file_bytes,
                 max_runtime_seconds=sum(job['runtime'] + 45 for job in jobs),
                 peak_criteria={'minimum_seconds': 5, 'tolerance': 0.05,
                                'minimum_depth_percent': 20, 'minimum_half_depth_percent': 90})
+
+
+def cache_supplement_plan(total_bytes, free_bytes, write_budget, file_bytes, duration):
+    """Reserve one separate, bounded sustained-write observation.
+
+    The write itself initializes the owned file; lack of an observed stable
+    drop remains a partial result and never proves cache exhaustion.
+    """
+    values = (total_bytes, free_bytes, write_budget, file_bytes, duration)
+    if any(type(value) is not int or not 0 < value <= 2**63 - 1 for value in values):
+        raise ValueError('Cache supplement requires finite positive integer limits')
+    if (free_bytes > total_bytes or file_bytes < GIB or file_bytes % MIB
+            or write_budget < file_bytes or write_budget % MIB or not 105 <= duration <= 86400):
+        raise ValueError('Invalid space, write budget or cache observation duration')
+    reserve = max(10 * GIB, (total_bytes + 9) // 10)
+    if free_bytes < reserve + file_bytes + 64 * MIB:
+        raise ValueError('Insufficient space after reserve and metadata headroom')
+    job = dict(name='sustained', rw='write', bs=MIB, qd=16, io_bytes=write_budget,
+               runtime=duration, cache_test=True, initialize_bytes=file_bytes)
+    return dict(profile='cache_supplement', method_version=CACHE_SUPPLEMENT_METHOD,
+                file_bytes=file_bytes, write_budget=write_budget, jobs=[job],
+                reserve_bytes=reserve, metadata_headroom_bytes=64*MIB,
+                max_write_bytes=write_budget, max_runtime_seconds=duration+45)
 
 
 def quick_plan(target):
@@ -766,7 +790,7 @@ def case_core_missing(case, job, config):
             written = 0
         if written < config.get("file_bytes", 0):
             missing.append("sustained.initialization")
-        if config.get("method_version") in (AUTO_METHOD, PEAK_METHOD):
+        if config.get("method_version") in (AUTO_METHOD, PEAK_METHOD, CACHE_SUPPLEMENT_METHOD):
             points, timing = cache_observation(case)
             assessed = cache_assessment(points, sampling_status=timing)
             speed = assessed.get("post_cache_mb_s")
@@ -776,7 +800,7 @@ def case_core_missing(case, job, config):
         if written < job["io_bytes"] and not (
             case.get("stop_reason") == "post_drop_stable"
             and cache_assessment(cache_observation(case)[0], sampling_status=cache_observation(case)[1]
-                                 if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD) else None)["status"] == "observed_drop_stable"
+                                 if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD, CACHE_SUPPLEMENT_METHOD) else None)["status"] == "observed_drop_stable"
         ):
             missing.append("sustained.endpoint")
     transferred = sum(data.get(d, {}).get("bytes", 0) for d in ("read", "write")
