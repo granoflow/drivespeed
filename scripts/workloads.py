@@ -5,6 +5,7 @@ import math
 import statistics
 
 PEAK_METHOD = "drivespeed-peak-v1"
+PEAK_SUPPLEMENT_METHOD = "drivespeed-peak-supplement-v1"
 AUTO_METHOD = "drivespeed-auto-full-v2"
 AUTO_METHODS = ("drivespeed-auto-full-v1", AUTO_METHOD)
 QUICK_METHOD = "drivespeed-quick-v2"
@@ -320,6 +321,52 @@ def peak_plan(total_bytes, free_bytes, write_budget, file_bytes,
                   + peak_writes + sustained,
                   max_runtime_seconds=sum(job["runtime"] + 45 for job in jobs))
     return config
+
+
+def peak_supplement_plan(total_bytes, free_bytes, write_budget, file_bytes,
+                         peak_io_bytes, workloads, depths, seconds=20):
+    """Reserve an independent, bounded pair of repeated peak measurements.
+
+    This is not a complete full run and does not merge historical samples. The
+    caller selects the workloads and adjacent depths after inspecting evidence.
+    """
+    values = (total_bytes, free_bytes, write_budget, file_bytes, peak_io_bytes, seconds)
+    if any(type(v) is not int or not 0 < v <= 2**63 - 1 for v in values):
+        raise ValueError('Peak supplement requires finite positive integer limits')
+    if free_bytes > total_bytes or file_bytes < GIB or file_bytes % MIB or peak_io_bytes % MIB:
+        raise ValueError('Invalid capacity or MiB-aligned peak supplement bounds')
+    specs = {'seq_read': ('read', MIB), 'seq_write': ('write', MIB),
+             'rand_read': ('randread', 4096), 'rand_write': ('randwrite', 4096)}
+    if (not isinstance(workloads, (tuple, list)) or not workloads
+            or any(not isinstance(w, str) or w not in specs for w in workloads)
+            or len(set(workloads)) != len(workloads)):
+        raise ValueError('Select distinct known peak workloads')
+    if not isinstance(depths, (tuple, list)) or tuple(depths) not in ((16, 32), (32, 64)):
+        raise ValueError('Select adjacent queue depths 16/32 or 32/64')
+    if not 5 <= seconds <= 86400:
+        raise ValueError('Peak sample runtime must be between five seconds and one day')
+    reserve = max(10 * GIB, (total_bytes + 9) // 10)
+    if free_bytes < reserve + file_bytes + 64 * MIB:
+        raise ValueError('Insufficient space after reserve and metadata headroom')
+    jobs = [dict(name='prepare', rw='write', bs=MIB, qd=16,
+                 io_bytes=file_bytes, runtime=900, require_complete=True)]
+    for workload in workloads:
+        rw, bs = specs[workload]
+        for depth in depths:
+            for repeat in (1, 2):
+                jobs.append(dict(name=f'peak_{workload}_{depth}_{repeat}', rw=rw,
+                                 bs=bs, qd=depth, io_bytes=peak_io_bytes,
+                                 runtime=seconds, peak_workload=workload))
+    maximum = sum(job['io_bytes'] for job in jobs if job['rw'] in ('write', 'randwrite'))
+    if maximum > write_budget or maximum > 2**63 - 1:
+        raise ValueError('Write budget cannot cover the selected peak measurements')
+    return dict(profile='peak_supplement', method_version=PEAK_SUPPLEMENT_METHOD,
+                file_bytes=file_bytes, write_budget=write_budget, jobs=jobs,
+                reserve_bytes=reserve, metadata_headroom_bytes=64 * MIB,
+                max_write_bytes=maximum,
+                max_runtime_seconds=sum(job['runtime'] + 45 for job in jobs),
+                peak_criteria={'minimum_seconds': 5, 'tolerance': 0.05,
+                               'minimum_depth_percent': 20, 'minimum_half_depth_percent': 90})
 
 
 def quick_plan(target):
