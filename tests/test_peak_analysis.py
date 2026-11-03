@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from peak_analysis import assess_peak_pair, assess_peak_scan, select_qd16_case
+from peak_analysis import assess_peak_pair, assess_peak_scan, select_qd16_case, qualified_depth, qd16_criteria
 
 
 def case(qd, rate):
@@ -20,6 +20,32 @@ def case(qd, rate):
 
 
 class PeakAnalysisTests(unittest.TestCase):
+    def test_depth_histogram_policy_requires_both_target_and_half_depth(self):
+        criteria = dict(minimum_depth_percent=20, minimum_half_depth_percent=90)
+        distribution = {'8': 0.9, '16': 74.1, '32': 25.0, '>=64': 0.0}
+        self.assertTrue(qualified_depth(distribution, 32, **criteria))
+        distribution['32'] = 19
+        self.assertFalse(qualified_depth(distribution, 32, **criteria))
+        distribution.update({'16': 50, '32': 25})
+        self.assertFalse(qualified_depth(distribution, 32, **criteria))
+        distribution.update({'16': 75, '32': 25, '>=64': float('nan')})
+        self.assertFalse(qualified_depth(distribution, 32, **criteria))
+
+    def test_new_policy_does_not_change_legacy_depth_qualification(self):
+        samples = [case(16, 100), case(16, 100), case(32, 101), case(32, 101)]
+        for item in samples:
+            d = item['qd']
+            item['metrics']['achieved_depth'] = {str(d // 2): 75, str(d): 24.9,
+                                                **({'32': 0} if d == 16 else {}), '>=64': 0}
+        self.assertEqual(assess_peak_pair(samples)['status'], 'incomplete')
+        self.assertEqual(assess_peak_pair(samples, minimum_depth_percent=20,
+                                         minimum_half_depth_percent=90)['status'], 'plateau')
+        samples[0]['name'] = 'seq_read_q'
+        result = {'plan': {'peak_criteria': {'minimum_seconds': 5, 'tolerance': .05,
+                                            'minimum_depth_percent': 20, 'minimum_half_depth_percent': 90}}}
+        self.assertIsNone(select_qd16_case(samples, 'seq_read'))
+        self.assertIs(select_qd16_case(samples, 'seq_read', **qd16_criteria(result)), samples[0])
+
     def test_plateau_increase_and_unstable(self):
         cases = [case(16, 100), case(16, 102), case(32, 103), case(32, 104)]
         self.assertEqual(assess_peak_pair(cases)["status"], "plateau")

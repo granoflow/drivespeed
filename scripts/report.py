@@ -387,8 +387,8 @@ def render_connection_reference(result, references, text):
             {},
         )
         if result.get("tool", {}).get("method_version") == PEAK_METHOD:
-            from peak_analysis import select_qd16_case
-            case = select_qd16_case(result.get("cases", []), "seq_" + direction) or next(
+            from peak_analysis import select_qd16_case, qd16_criteria
+            case = select_qd16_case(result.get("cases", []), "seq_" + direction, **qd16_criteria(result)) or next(
                 (c for c in result.get("cases", [])
                  if c.get("name") == "seq_" + direction and c.get("status") == "completed"), {}
             )
@@ -940,8 +940,8 @@ def render_report(result, output, language, text, requested_format="html", compa
         for case_name in (name, name + "_q"):
             case = next((c for c in completed if c["name"] == case_name), {})
             if case_name.endswith("_q") and result.get("tool", {}).get("method_version") == PEAK_METHOD:
-                from peak_analysis import select_qd16_case
-                case = select_qd16_case(cases, name) or {}
+                from peak_analysis import select_qd16_case, qd16_criteria
+                case = select_qd16_case(cases, name, **qd16_criteria(result)) or {}
             metrics = case.get("metrics", {}).get(direction, {})
             value = metrics.get("mb_s")
             if value is not None:

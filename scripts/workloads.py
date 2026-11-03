@@ -315,7 +315,7 @@ def peak_plan(total_bytes, free_bytes, write_budget, file_bytes,
     jobs = [init] + short_jobs + scans + [sustained_job]
     config.update(method_version=PEAK_METHOD, jobs=jobs,
                   peak_criteria={"minimum_seconds": 5, "tolerance": 0.05,
-                                 "minimum_depth_percent": 25},
+                                 "minimum_depth_percent": 20, "minimum_half_depth_percent": 90},
                   max_write_bytes=file_bytes + 5 * case_write_bytes
                   + peak_writes + sustained,
                   max_runtime_seconds=sum(job["runtime"] + 45 for job in jobs))
@@ -707,9 +707,13 @@ def peak_completeness(result):
             or len(jobs) != len(expected) or set(expected) != base_names | scan_names
             or len(cases) != len(observed)):
         missing.append("plan.jobs")
-    criteria = {"minimum_seconds": 5, "tolerance": 0.05, "minimum_depth_percent": 25}
-    if plan.get("peak_criteria") != criteria:
+    old_criteria = {"minimum_seconds": 5, "tolerance": 0.05, "minimum_depth_percent": 25}
+    new_criteria = {"minimum_seconds": 5, "tolerance": 0.05, "minimum_depth_percent": 20,
+                    "minimum_half_depth_percent": 90}
+    criteria = plan.get("peak_criteria")
+    if criteria not in (old_criteria, new_criteria):
         missing.append("plan.peak_criteria")
+        criteria = old_criteria
     specs = {
         "prepare": ("write", MIB, 16), "seq_read": ("read", MIB, 1),
         "seq_write": ("write", MIB, 1), "seq_read_q": ("read", MIB, 16),

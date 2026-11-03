@@ -5,8 +5,30 @@ import math
 from workloads import MIB, active_runtime_ms, collection_status
 
 
+def qualified_depth(distribution, depth, minimum_depth_percent=25,
+                    minimum_half_depth_percent=None):
+    """Apply the plan's I/O-count histogram policy, not a time-depth claim."""
+    key = '>=64' if depth == 64 else str(depth)
+    value = distribution.get(key)
+    if (type(value) not in (int, float) or not math.isfinite(value)
+            or not minimum_depth_percent <= value <= 100):
+        return False
+    if minimum_half_depth_percent is None:
+        return True
+    if depth not in (16, 32, 64):
+        return False
+    keys = [str(depth // 2), key]
+    # A bucket covers its lower bound up to the next power of two.
+    keys += [str(d) for d in (2, 4, 8, 16, 32) if d > depth]
+    if depth < 64:
+        keys.append('>=64')
+    values = [distribution.get(k) for k in keys]
+    return (all(type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 100 for v in values)
+            and minimum_half_depth_percent <= sum(values) <= 100.5)
+
+
 def assess_peak_pair(cases, minimum_seconds=5, tolerance=0.05,
-                     minimum_depth_percent=25):
+                     minimum_depth_percent=25, minimum_half_depth_percent=None):
     """Compare two repeats at each of two depths under the same workload.
 
     fio depth buckets cover ranges of powers of two. A result is qualified
@@ -46,12 +68,10 @@ def assess_peak_pair(cases, minimum_seconds=5, tolerance=0.05,
         if not isinstance(item, dict) or not isinstance(depth_distribution, dict):
             return result
         rate = item.get("mb_s")
-        depth_key = ">=64" if case["qd"] == 64 else str(case["qd"])
-        achieved = depth_distribution.get(depth_key)
         if (active_runtime_ms(metrics, signature[0]) < minimum_seconds * 1000
                 or type(rate) not in (int, float) or not math.isfinite(rate) or rate <= 0
-                or type(achieved) not in (int, float) or not math.isfinite(achieved)
-                or not minimum_depth_percent <= achieved <= 100):
+                or not qualified_depth(depth_distribution, case['qd'], minimum_depth_percent,
+                                       minimum_half_depth_percent)):
             return result
         rates.append(rate)
     means = [(rates[0] + rates[1]) / 2, (rates[2] + rates[3]) / 2]
@@ -109,13 +129,11 @@ def assess_peak_scan(cases, **criteria):
                 if not isinstance(measurement, dict) or not isinstance(depths, dict):
                     continue
                 rate = measurement.get("mb_s")
-                depth_key = ">=64" if depth == 64 else str(depth)
-                achieved = depths.get(depth_key)
                 if (collection_status(case) not in ("collected", "collected_irregular")
                         or active_runtime_ms(data, case.get("rw")) < criteria.get("minimum_seconds", 5) * 1000
                         or type(rate) not in (int, float) or not math.isfinite(rate) or rate <= 0
-                        or type(achieved) not in (int, float) or not math.isfinite(achieved)
-                        or not criteria.get("minimum_depth_percent", 25) <= achieved <= 100):
+                        or not qualified_depth(depths, depth, criteria.get('minimum_depth_percent', 25),
+                                               criteria.get('minimum_half_depth_percent'))):
                     continue
                 candidates.append({"mb_s": rate, "name": case["name"],
                                    "collection_status": collection_status(case)})
@@ -127,7 +145,17 @@ def assess_peak_scan(cases, **criteria):
     return {"status": status, "workloads": results}
 
 
-def select_qd16_case(cases, workload, minimum_seconds=5, minimum_depth_percent=25):
+def qd16_criteria(result):
+    """Select only an explicitly frozen, recognized new depth policy."""
+    criteria = result.get('plan', {}).get('peak_criteria')
+    if criteria == {'minimum_seconds': 5, 'tolerance': 0.05, 'minimum_depth_percent': 20,
+                    'minimum_half_depth_percent': 90}:
+        return {'minimum_depth_percent': 20, 'minimum_half_depth_percent': 90}
+    return {}
+
+
+def select_qd16_case(cases, workload, minimum_seconds=5, minimum_depth_percent=25,
+                     minimum_half_depth_percent=None):
     """Return the highest qualified QD16 case from the same run and workload."""
     specs = {"seq_read": ("read", MIB), "seq_write": ("write", MIB),
              "rand_read": ("randread", 4096), "rand_write": ("randwrite", 4096)}
@@ -148,12 +176,11 @@ def select_qd16_case(cases, workload, minimum_seconds=5, minimum_depth_percent=2
         depths = data.get("achieved_depth")
         if not isinstance(measure, dict) or not isinstance(depths, dict):
             continue
-        rate, achieved = measure.get("mb_s"), depths.get("16")
+        rate = measure.get("mb_s")
         if (collection_status(case) not in ("collected", "collected_irregular")
                 or active_runtime_ms(data, rw) < minimum_seconds * 1000
                 or type(rate) not in (int, float) or not math.isfinite(rate) or rate <= 0
-                or type(achieved) not in (int, float) or not math.isfinite(achieved)
-                or not minimum_depth_percent <= achieved <= 100):
+                or not qualified_depth(depths, 16, minimum_depth_percent, minimum_half_depth_percent)):
             continue
         candidates.append(case)
     return max(candidates, key=lambda case: case["metrics"][direction]["mb_s"], default=None)

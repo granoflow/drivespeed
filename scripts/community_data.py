@@ -434,8 +434,8 @@ def project_result(result, profile_url, intro="", submission_id=None):
         public_name = local.get("name")
         if method == PEAK_METHOD and public_name in ("seq_read_q", "seq_write_q",
                                                       "rand_read_q", "rand_write_q"):
-            from peak_analysis import select_qd16_case
-            local = select_qd16_case(result["cases"], public_name[:-2])
+            from peak_analysis import select_qd16_case, qd16_criteria
+            local = select_qd16_case(result["cases"], public_name[:-2], **qd16_criteria(result))
             if local is None:
                 _fail("cases." + public_name)
         if (public_name == "prepare" or local.get("status") == "skipped"

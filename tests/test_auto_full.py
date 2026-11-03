@@ -130,6 +130,10 @@ class PeakCompletenessTests(unittest.TestCase):
              patch("peak_analysis.assess_peak_scan", return_value={"status": "complete"}), \
              patch("peak_analysis.assess_peak_pair", return_value={"status": "plateau"}):
             self.assertTrue(peak_completeness(result)["complete"])
+            old = copy.deepcopy(result)
+            old['plan']['peak_criteria'] = {'minimum_seconds': 5, 'tolerance': .05,
+                                            'minimum_depth_percent': 25}
+            self.assertTrue(peak_completeness(old)['complete'])
             altered = copy.deepcopy(result)
             altered["plan"]["peak_criteria"]["tolerance"] = 0.9
             self.assertIn("plan.peak_criteria", peak_completeness(altered)["missing_core"])
@@ -518,7 +522,11 @@ class EntryAndQualityTests(unittest.TestCase):
             def produced(fio, job, *unused):
                 active = ("read", "write") if job["rw"] == "randrw" else (
                     "read" if job["rw"] in ("read", "randread") else "write",)
-                data = {"runtime_ms": 6000, "achieved_depth": {str(job["qd"]): 80}}
+                depths = {key: 0 for key in ('1', '2', '4', '8', '16', '32', '>=64')}
+                depths['>=64' if job['qd'] == 64 else str(job['qd'])] = 80
+                if job['qd'] >= 16:
+                    depths[str(job['qd'] // 2)] = 20
+                data = {"runtime_ms": 6000, "achieved_depth": depths}
                 for direction in ("read", "write"):
                     count = job["io_bytes"] // len(active) if direction in active else 0
                     data[direction] = {"bytes": count, "runtime_ms": 6000,

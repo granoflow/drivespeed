@@ -204,8 +204,8 @@ def component_summary(result):
     for direction in ('read', 'write'):
         cases = [c for c in result.get('cases', []) if c.get('name') == 'seq_' + direction + '_q']
         if result.get('tool', {}).get('method_version') == PEAK_METHOD:
-            from peak_analysis import select_qd16_case
-            selected = select_qd16_case(result.get('cases', []), 'seq_' + direction)
+            from peak_analysis import select_qd16_case, qd16_criteria
+            selected = select_qd16_case(result.get('cases', []), 'seq_' + direction, **qd16_criteria(result))
             cases = [selected] if selected else []
         if len(cases) == 1:
             c = cases[0]
