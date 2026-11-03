@@ -105,9 +105,9 @@ def assess_peak_scan(cases, **criteria):
                 return {"status": "incomplete"}
             return assess_peak_pair([by_name[name] for name in names], **criteria)
 
-        result = pair(16, 32)
-        if result["status"] == "increase":
-            result = pair(32, 64)
+        lower_pair = pair(16, 32)
+        upper_pair = pair(32, 64)
+        result = upper_pair if lower_pair["status"] == "increase" else lower_pair
         best = []
         for depth in (16, 32, 64):
             candidates = []
@@ -139,7 +139,10 @@ def assess_peak_scan(cases, **criteria):
                                    "collection_status": collection_status(case)})
             if candidates:
                 best.append({"qd": depth, **max(candidates, key=lambda item: item["mb_s"])})
-        results[workload] = {**result, "highest_single_by_qd": best}
+        # These pair diagnostics inform a later plan. They do not replace the
+        # original versioned scan rule or make an incomplete scan complete.
+        results[workload] = {**result, "highest_single_by_qd": best,
+                             "adjacent_pairs": {"16_32": lower_pair, "32_64": upper_pair}}
     status = "complete" if all(item["status"] == "plateau"
                                for item in results.values()) else "incomplete"
     return {"status": status, "workloads": results}

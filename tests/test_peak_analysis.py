@@ -74,6 +74,24 @@ class PeakAnalysisTests(unittest.TestCase):
         result = assess_peak_scan(cases)
         self.assertEqual(result["workloads"]["seq_read"]["highest_single_by_qd"][0]["mb_s"], 100)
 
+    def test_later_pair_is_diagnostic_only_when_first_pair_is_unstable(self):
+        samples = []
+        for depth, rates in ((16, (80, 100)), (32, (100, 101)), (64, (100, 101))):
+            for repeat, rate in enumerate(rates, 1):
+                item = case(depth, rate)
+                item['name'] = f'peak_seq_read_{depth}_{repeat}'
+                if depth == 64:
+                    item['metrics']['achieved_depth'] = {'>=64':80}
+                samples.append(item)
+        before = copy.deepcopy(samples)
+        result = assess_peak_scan(samples)
+        item = result['workloads']['seq_read']
+        self.assertEqual(item['status'], 'unstable')
+        self.assertEqual(item['adjacent_pairs']['16_32']['status'], 'unstable')
+        self.assertEqual(item['adjacent_pairs']['32_64']['status'], 'plateau')
+        self.assertEqual(result['status'], 'incomplete')
+        self.assertEqual(samples, before)
+
     def test_selects_highest_matching_qd16_without_mutating_cases(self):
         base = case(16, 100)
         base["name"] = "seq_read_q"
