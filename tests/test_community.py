@@ -95,8 +95,17 @@ class ProjectionTests(unittest.TestCase):
                 latency = item["metrics"][direction].get("latency_us")
                 if latency is not None:
                     latency["mean"] = 2
-        scan = copy.deepcopy(original["cases"][0])
+        for item in original["cases"]:
+            if item["name"].endswith("_q"):
+                item["metrics"]["runtime_ms"] = 5000
+                item["metrics"]["achieved_depth"] = {"16": 80}
+                direction = "read" if item["rw"] in ("read", "randread") else "write"
+                item["metrics"][direction]["runtime_ms"] = 5000
+                item["series"] = [dict(seconds=t, direction=direction, mb_s=10)
+                                  for t in range(1, 6)]
+        scan = copy.deepcopy(next(item for item in original["cases"] if item["name"] == "seq_read_q"))
         scan.update(name="peak_seq_read_16_1", qd=16)
+        scan["metrics"]["read"]["mb_s"] = 99
         original["cases"].append(scan)
         with patch("workloads.case_core_missing", return_value=[]), \
              patch("workloads.peak_completeness", return_value={"complete": True, "missing_core": []}):
@@ -104,6 +113,7 @@ class ProjectionTests(unittest.TestCase):
                                             submission_id=ID)
         self.assertEqual(projected["tool"]["method_version"], "drivespeed-peak-v1")
         self.assertEqual(len(projected["cases"]), 11)
+        self.assertEqual(next(item for item in projected["cases"] if item["name"] == "seq_read_q")["read"]["mb_s"], 99)
         self.assertFalse(any(case["name"].startswith("peak_") for case in projected["cases"]))
         data.validate_payload(projected)
         with patch("workloads.peak_completeness",

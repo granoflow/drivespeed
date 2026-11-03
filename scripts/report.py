@@ -933,6 +933,9 @@ def render_report(result, output, language, text, requested_format="html", compa
     ]:
         for case_name in (name, name + "_q"):
             case = next((c for c in completed if c["name"] == case_name), {})
+            if case_name.endswith("_q") and result.get("tool", {}).get("method_version") == PEAK_METHOD:
+                from peak_analysis import select_qd16_case
+                case = select_qd16_case(cases, name) or {}
             metrics = case.get("metrics", {}).get(direction, {})
             value = metrics.get("mb_s")
             if value is not None:

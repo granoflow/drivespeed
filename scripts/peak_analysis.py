@@ -125,3 +125,35 @@ def assess_peak_scan(cases, **criteria):
     status = "complete" if all(item["status"] == "plateau"
                                for item in results.values()) else "incomplete"
     return {"status": status, "workloads": results}
+
+
+def select_qd16_case(cases, workload, minimum_seconds=5, minimum_depth_percent=25):
+    """Return the highest qualified QD16 case from the same run and workload."""
+    specs = {"seq_read": ("read", MIB), "seq_write": ("write", MIB),
+             "rand_read": ("randread", 4096), "rand_write": ("randwrite", 4096)}
+    if workload not in specs:
+        raise ValueError("Unknown workload")
+    rw, block = specs[workload]
+    direction = "read" if rw in ("read", "randread") else "write"
+    names = {workload + "_q", f"peak_{workload}_16_1", f"peak_{workload}_16_2"}
+    candidates = []
+    for case in cases:
+        if (case.get("name") not in names or case.get("status") != "completed"
+                or (case.get("rw"), case.get("bs"), case.get("qd")) != (rw, block, 16)):
+            continue
+        data = case.get("metrics")
+        if not isinstance(data, dict):
+            continue
+        measure = data.get(direction)
+        depths = data.get("achieved_depth")
+        if not isinstance(measure, dict) or not isinstance(depths, dict):
+            continue
+        rate, achieved = measure.get("mb_s"), depths.get("16")
+        if (collection_status(case) not in ("collected", "collected_irregular")
+                or active_runtime_ms(data, rw) < minimum_seconds * 1000
+                or type(rate) not in (int, float) or not math.isfinite(rate) or rate <= 0
+                or type(achieved) not in (int, float) or not math.isfinite(achieved)
+                or not minimum_depth_percent <= achieved <= 100):
+            continue
+        candidates.append(case)
+    return max(candidates, key=lambda case: case["metrics"][direction]["mb_s"], default=None)

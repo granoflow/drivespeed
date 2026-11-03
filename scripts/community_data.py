@@ -431,8 +431,15 @@ def project_result(result, profile_url, intro="", submission_id=None):
             models[kind] = {"model": value, "source": "user" if source.get("source") == "user" else "detected"}
     cases, engines = [], set()
     for local in result.get("cases", []):
-        if (local.get("name") == "prepare" or local.get("status") == "skipped"
-                or method == PEAK_METHOD and local.get("name", "").startswith("peak_")):
+        public_name = local.get("name")
+        if method == PEAK_METHOD and public_name in ("seq_read_q", "seq_write_q",
+                                                      "rand_read_q", "rand_write_q"):
+            from peak_analysis import select_qd16_case
+            local = select_qd16_case(result["cases"], public_name[:-2])
+            if local is None:
+                _fail("cases." + public_name)
+        if (public_name == "prepare" or local.get("status") == "skipped"
+                or method == PEAK_METHOD and public_name.startswith("peak_")):
             continue
         field = f"cases[{len(cases)}]"
         if _command(local, "direct", field) != "1":
@@ -479,7 +486,7 @@ def project_result(result, profile_url, intro="", submission_id=None):
             cache = {"status": "observed" if observed else "incomplete" if not timing_ok else "not_observed" if assessed.get("status") == "no_drop_observed" else "incomplete",
                      "capacity_estimate_bytes": assessed.get("cache_capacity_estimate_bytes") if observed else None,
                      "post_cache_mb_s": _number(assessed.get("post_cache_mb_s"), field + ".cache") if observed else None, "cause_confirmed": False}
-        cases.append({"name": local.get("name"), "rw": local.get("rw"), "bs_bytes": numeric["bs"], "qd": numeric["qd"],
+        cases.append({"name": public_name, "rw": local.get("rw"), "bs_bytes": numeric["bs"], "qd": numeric["qd"],
             "numjobs": numjobs, "runtime_limit_seconds": numeric["runtime"], "rwmixread": mix, "status": local.get("status"),
             "measurement_seconds": _number(measurements.get("runtime_ms", 0), field + ".runtime_ms") / 1000, "read": _direction(measurements, "read", automatic),
             "write": _direction(measurements, "write", automatic), "achieved_depth": depth, "cache": cache})

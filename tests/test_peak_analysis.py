@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from peak_analysis import assess_peak_pair, assess_peak_scan
+from peak_analysis import assess_peak_pair, assess_peak_scan, select_qd16_case
 
 
 def case(qd, rate):
@@ -47,6 +47,20 @@ class PeakAnalysisTests(unittest.TestCase):
         cases[1]["metrics"]["achieved_depth"]["16"] = 1
         result = assess_peak_scan(cases)
         self.assertEqual(result["workloads"]["seq_read"]["highest_single_by_qd"][0]["mb_s"], 100)
+
+    def test_selects_highest_matching_qd16_without_mutating_cases(self):
+        base = case(16, 100)
+        base["name"] = "seq_read_q"
+        repeat = case(16, 130)
+        repeat["name"] = "peak_seq_read_16_1"
+        invalid = case(16, 200)
+        invalid["name"] = "peak_seq_read_16_2"
+        invalid["metrics"]["achieved_depth"]["16"] = 1
+        samples = [base, repeat, invalid]
+        before = copy.deepcopy(samples)
+        self.assertIs(select_qd16_case(samples, "seq_read"), repeat)
+        self.assertEqual(samples, before)
+        self.assertIsNone(select_qd16_case(samples, "seq_write"))
 
     def test_irregular_log_intervals_preserve_final_aggregate_comparison(self):
         cases = [case(16, 100), case(16, 100), case(32, 101), case(32, 101)]
