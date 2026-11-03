@@ -203,9 +203,13 @@ def component_summary(result):
     measured = {}
     for direction in ('read', 'write'):
         cases = [c for c in result.get('cases', []) if c.get('name') == 'seq_' + direction + '_q']
+        if result.get('tool', {}).get('method_version') == PEAK_METHOD:
+            from peak_analysis import select_qd16_case
+            selected = select_qd16_case(result.get('cases', []), 'seq_' + direction)
+            cases = [selected] if selected else []
         if len(cases) == 1:
             c = cases[0]
-            if (c.get('status') == 'completed' and c.get('metrics_complete') is True and c.get('qd') == 16
+            if (c.get('status') == 'completed' and (c.get('metrics_complete') is True or result.get('tool', {}).get('method_version') == PEAK_METHOD) and c.get('qd') == 16
                     and c.get('bs') == 1048576 and c.get('rw') == direction):
                 measured[direction] = c.get('metrics', {}).get(direction, {}).get('mb_s')
     bounds = [f['mb_s'] for link in result.get('hardware', {}).get('links', []) if (f := link_reference(link))]

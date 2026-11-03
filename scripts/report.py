@@ -386,6 +386,12 @@ def render_connection_reference(result, references, text):
             ),
             {},
         )
+        if result.get("tool", {}).get("method_version") == PEAK_METHOD:
+            from peak_analysis import select_qd16_case
+            case = select_qd16_case(result.get("cases", []), "seq_" + direction) or next(
+                (c for c in result.get("cases", [])
+                 if c.get("name") == "seq_" + direction and c.get("status") == "completed"), {}
+            )
         measured = case.get("metrics", {}).get(direction, {}).get("mb_s")
         actual = (
             number(measured) + " MB/s"
@@ -400,7 +406,7 @@ def render_connection_reference(result, references, text):
         comparisons.append(
             f'<tr data-path-direction="{direction}" data-limit-mb-s="{cap}">'
             f'<th scope="row">{esc(text[direction])}</th><td dir="ltr">{number(cap)} MB/s</td>'
-            f'<td>{esc(actual)}<small>{esc(text.get(case.get("name"), ""))}</small></td><td dir="ltr">{esc(gap)}</td></tr>'
+            f'<td>{esc(actual)}<small>{esc(text.get("seq_" + direction + "_q" if case.get("name", "").startswith("peak_") else case.get("name"), ""))}</small></td><td dir="ltr">{esc(gap)}</td></tr>'
         )
     component_rows, used = [], []
     hardware = result.get("hardware", {})

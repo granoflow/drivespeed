@@ -14,6 +14,15 @@ def caps():
 
 
 class ComponentUtilisationTests(unittest.TestCase):
+    def test_peak_method_uses_highest_qualified_qd16_for_component_measurement(self):
+        from test_peak_analysis import case
+        from workloads import PEAK_METHOD
+        result = hardware_tests.HardwareRatingTests().fixture()
+        base = case(16, 100); base['name'] = 'seq_read_q'
+        best = case(16, 130); best['name'] = 'peak_seq_read_16_1'
+        result.update(tool={'method_version': PEAK_METHOD}, cases=[base, best])
+        self.assertEqual(component_summary(result)['measured']['read'], 130)
+
     def test_three_axes_explain_a_healthy_but_limited_drive(self):
         result=utilisation_summary(dict(read=2200,write=2000),caps(),[2500])
         self.assertEqual([r['level'] for r in result['rows']],[4,5,1])

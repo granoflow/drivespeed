@@ -37,6 +37,19 @@ class Sections(HTMLParser):
 
 
 class ReportReadingTests(unittest.TestCase):
+    def test_peak_connection_reference_uses_selected_qd16_measurement(self):
+        from test_peak_analysis import case
+        from workloads import PEAK_METHOD
+        result = device_result()
+        base = case(16, 100); base['name'] = 'seq_read_q'
+        best = case(16, 130); best['name'] = 'peak_seq_read_16_1'
+        result['tool'] = {'method_version': PEAK_METHOD}
+        result['cases'] = [base, best]
+        document, _ = render_connection_reference(result, result['references'], messages('zh-CN'))
+        row = re.search(r'<tr data-path-direction="read".*?</tr>', document, re.S).group()
+        self.assertIn('130.00 MB/s', row)
+        self.assertNotIn('100.00 MB/s', row)
+
     def test_verified_stable_cache_keeps_source_facts_and_moves_followup_to_receipt(self):
         result = local_result()
         result.pop('user_input', None)
