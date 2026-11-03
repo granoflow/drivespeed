@@ -324,7 +324,7 @@ def peak_plan(total_bytes, free_bytes, write_budget, file_bytes,
 
 
 def peak_supplement_plan(total_bytes, free_bytes, write_budget, file_bytes,
-                         peak_io_bytes, workloads, depths, seconds=20):
+                         peak_io_bytes, workloads, depths, seconds=20, workload_io_bytes=None):
     """Reserve independent, bounded repeated peak measurements.
 
     This is not a complete full run and does not merge historical samples. The
@@ -341,6 +341,11 @@ def peak_supplement_plan(total_bytes, free_bytes, write_budget, file_bytes,
             or any(not isinstance(w, str) or w not in specs for w in workloads)
             or len(set(workloads)) != len(workloads)):
         raise ValueError('Select distinct known peak workloads')
+    overrides = {} if workload_io_bytes is None else workload_io_bytes
+    if (not isinstance(overrides, dict) or any(key not in workloads for key in overrides)
+            or any(type(value) is not int or not 0 < value <= 2**63 - 1 or value % MIB
+                   for value in overrides.values())):
+        raise ValueError('Per-workload I/O bounds must be MiB-aligned and apply to selected workloads')
     if not isinstance(depths, (tuple, list)) or tuple(depths) not in ((16, 32), (32, 64), (16, 32, 64)):
         raise ValueError('Select queue depths 16/32, 32/64, or 16/32/64')
     if not 5 <= seconds <= 86400:
@@ -355,7 +360,7 @@ def peak_supplement_plan(total_bytes, free_bytes, write_budget, file_bytes,
         for depth in depths:
             for repeat in (1, 2):
                 jobs.append(dict(name=f'peak_{workload}_{depth}_{repeat}', rw=rw,
-                                 bs=bs, qd=depth, io_bytes=peak_io_bytes,
+                                 bs=bs, qd=depth, io_bytes=overrides.get(workload, peak_io_bytes),
                                  runtime=seconds, peak_workload=workload))
     maximum = sum(job['io_bytes'] for job in jobs if job['rw'] in ('write', 'randwrite'))
     if maximum > write_budget or maximum > 2**63 - 1:

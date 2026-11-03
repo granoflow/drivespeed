@@ -121,6 +121,8 @@ def parser():
                    help="Quick actual sequential measurement, or deeper full test; legacy CLI default is full")
     p.add_argument("--supplement-workload", action="append", choices=("seq_read", "seq_write", "rand_read", "rand_write"),
                    help="Peak supplement workload; repeat for each required workload")
+    p.add_argument("--supplement-io-bytes", action="append", metavar="WORKLOAD=BYTES",
+                   help="Override the per-sample I/O bound for a selected workload; may be repeated")
     p.add_argument("--supplement-depths", choices=("16,32", "32,64", "16,32,64"), metavar="DEPTHS",
                    help="Queue depths for a peak supplement: 16,32; 32,64; or 16,32,64")
     p.add_argument("--peak-source", help="Original peak results to compare with this separate supplement")
@@ -542,6 +544,7 @@ def execute(args, text, report_text):
         raise ValueError('Trash reuse requires a peak stage, an exact working file size, and default cleanup')
     supplement_workloads = getattr(args, 'supplement_workload', None)
     supplement_depths = getattr(args, 'supplement_depths', None)
+    supplement_limits = getattr(args, 'supplement_io_bytes', None)
     peak_source_path = getattr(args, 'peak_source', None)
     if args.stage == 'peak-supplement':
         if (args.capacity_from or args.quick_from or args.case_write_bytes is not None
@@ -549,8 +552,17 @@ def execute(args, text, report_text):
                 or args.peak_io_bytes is None or not supplement_workloads or not supplement_depths
                 or args.format != 'html'):
             raise ValueError('Peak supplement requires explicit write, file, I/O, workloads and depths')
-    elif supplement_workloads is not None or supplement_depths is not None or peak_source_path is not None:
+    elif supplement_workloads is not None or supplement_depths is not None or supplement_limits is not None or peak_source_path is not None:
         raise ValueError('Supplement options require peak-supplement stage')
+    overrides = {}
+    for entry in supplement_limits or []:
+        if not isinstance(entry, str) or entry.count('=') != 1:
+            raise ValueError('Supplement I/O override requires WORKLOAD=BYTES')
+        name, size = entry.split('=', 1)
+        if (name not in (supplement_workloads or []) or name in overrides
+                or not size.isascii() or not size.isdecimal() or len(size) > 19):
+            raise ValueError('Invalid or duplicate supplement I/O override')
+        overrides[name] = int(size)
     if args.stage == "quick" and (args.peak_io_bytes is not None or args.capacity_from or args.propose_write_bytes is not None or args.quick_from or args.working_file_bytes is not None or args.case_write_bytes is not None):
         raise ValueError("Quick measurements do not take deeper-test or capacity options")
     if args.capacity_from and (args.propose_write_bytes is not None or args.working_file_bytes is not None or args.case_write_bytes is not None):
@@ -586,7 +598,8 @@ def execute(args, text, report_text):
             effective_free = min(target['total_bytes'], target['free_bytes'] + (reuse['payload_bytes'] if reuse else 0))
             result = peak_supplement_plan(target['total_bytes'], effective_free,
                 args.propose_write_bytes, args.working_file_bytes, args.peak_io_bytes,
-                supplement_workloads, [int(value) for value in supplement_depths.split(',')])
+                supplement_workloads, [int(value) for value in supplement_depths.split(',')],
+                workload_io_bytes=overrides)
             if reuse:
                 result['reuse_workspace'] = reuse
             if peak_source is not None:

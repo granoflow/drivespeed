@@ -54,6 +54,32 @@ class PeakSupplementPlanTests(unittest.TestCase):
         self.assertEqual(config['max_write_bytes'],68*GIB)
         self.assertEqual([job['qd'] for job in config['jobs'][1:]], [16,16,32,32,64,64])
 
+    def test_per_workload_bounds_reduce_only_the_selected_write_reservation(self):
+        config = peak_supplement_plan(1000*GIB,700*GIB,100*GIB,8*GIB,10*GIB,
+            ['seq_write','rand_write'],[16,32,64],workload_io_bytes={'rand_write':4*GIB})
+        self.assertEqual(config['max_write_bytes'],92*GIB)
+        self.assertTrue(all(j['io_bytes']==4*GIB for j in config['jobs'] if j.get('peak_workload')=='rand_write'))
+        self.assertTrue(all(j['io_bytes']==10*GIB for j in config['jobs'] if j.get('peak_workload')=='seq_write'))
+        with self.assertRaises(ValueError):
+            peak_supplement_plan(1000*GIB,700*GIB,91*GIB,8*GIB,10*GIB,
+                ['seq_write','rand_write'],[16,32,64],workload_io_bytes={'rand_write':4*GIB})
+        for bad in ({'rand_read':GIB},{'rand_write':True},{'rand_write':MIB+1}):
+            with self.subTest(override=bad),self.assertRaises(ValueError):
+                peak_supplement_plan(1000*GIB,700*GIB,100*GIB,8*GIB,10*GIB,
+                    ['seq_write','rand_write'],[16,32,64],workload_io_bytes=bad)
+
+    def test_invalid_cli_overrides_fail_before_target_inspection(self):
+        base=['--disk','/not-used','--stage','peak-supplement',
+              '--propose-write-bytes',str(100*GIB),'--working-file-bytes',str(8*GIB),
+              '--peak-io-bytes',str(10*GIB),'--supplement-depths','16,32',
+              '--supplement-workload','rand_write']
+        for values in (['rand_read=1048576'],['rand_write=1','rand_write=1'],
+                       ['rand_write=-1'],['rand_write=１２３'],['rand_write']):
+            argv=base+sum((['--supplement-io-bytes',v] for v in values),[])
+            with self.subTest(values=values),patch.object(benchmark,'target_info') as target, self.assertRaises(ValueError):
+                benchmark.execute(benchmark.parser().parse_args(argv),messages('en'),messages('en'))
+            target.assert_not_called()
+
     def test_confirmation_digest_changes_with_depth_or_selected_workload(self):
         target = fixtures.AuthorizationTests().target()
         common = (1000*GIB, 700*GIB, 50*GIB, 8*GIB, 10*GIB)
@@ -64,6 +90,8 @@ class PeakSupplementPlanTests(unittest.TestCase):
         different_workload = peak_supplement_plan(*common, ['seq_write'], [16, 32])
         self.assertNotEqual(plan_hash(target,first,allowance), plan_hash(target,different_depth,allowance))
         self.assertNotEqual(plan_hash(target,first,allowance), plan_hash(target,different_workload,allowance))
+        different_io=peak_supplement_plan(*common,['rand_write'],[16,32],workload_io_bytes={'rand_write':GIB})
+        self.assertNotEqual(plan_hash(target,first,allowance),plan_hash(target,different_io,allowance))
 
     def test_rejects_incomplete_or_unsafe_plans(self):
         args = [1000*GIB, 700*GIB, 50*GIB, 8*GIB, 10*GIB, ['rand_write'], [32, 64]]
@@ -82,13 +110,15 @@ class PeakSupplementPlanTests(unittest.TestCase):
 
 class PeakSupplementFlowTests(unittest.TestCase):
     def execute_fixture(self, root, fail=False, with_source=False, wrong_identity=False,
-                        adaptive=False, increasing=False, late_increase=False):
+                        adaptive=False, increasing=False, late_increase=False, override=None):
         target = fixtures.AuthorizationTests().target()
         target.update(path=str(root), st_dev=root.stat().st_dev, inode=root.stat().st_ino)
         cli = ['--disk', str(root), '--output', str(root/'out'),
             '--stage', 'peak-supplement', '--propose-write-bytes', str(8*GIB),
             '--working-file-bytes', str(8*GIB), '--peak-io-bytes', str(GIB),
             '--supplement-workload', 'seq_read', '--supplement-depths', '16,32,64' if adaptive else '16,32']
+        if override is not None:
+            cli += ['--supplement-io-bytes', 'seq_read='+str(override)]
         identity = {'version':1, 'fingerprint':'a'*64, 'source':'smartctl:serial_number', 'attachment':'internal'}
         if with_source:
             criteria = {'minimum_seconds':5,'tolerance':.05,'minimum_depth_percent':20,'minimum_half_depth_percent':90}
@@ -146,6 +176,13 @@ class PeakSupplementFlowTests(unittest.TestCase):
         self.assertEqual(result['completeness'], {'complete':False, 'missing_core':['full_run']})
         self.assertEqual(result['peak_supplement']['seq_read']['status'], 'plateau')
         self.assertEqual(result['report'], {})
+
+    def test_cli_override_is_frozen_in_the_executed_plan(self):
+        with tempfile.TemporaryDirectory() as name:
+            _,result,mocked = self.execute_fixture(Path(name).resolve(),override=512*MIB)
+        self.assertEqual(mocked['run_case'].call_count,5)
+        self.assertTrue(all(job['io_bytes']==512*MIB for job in result['plan']['jobs'] if job.get('peak_workload')=='seq_read'))
+        self.assertIn('plan_sha256',result['write_authorization'])
 
     def test_adaptive_scan_skips_64_after_repeated_plateau(self):
         with tempfile.TemporaryDirectory() as name:

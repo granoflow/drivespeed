@@ -18,6 +18,8 @@ python3 scripts/benchmark.py --disk /path/to/selected-volume --stage quick --out
 
 `--stage peak-supplement` 是单独记录的峰值诊断：显式提供 `--propose-write-bytes`、`--working-file-bytes`、`--peak-io-bytes`、至少一个 `--supplement-workload`（可重复，值为 `seq_read`、`seq_write`、`rand_read`、`rand_write`）和 `--supplement-depths 16,32`、`32,64` 或 `16,32,64`。计划先初始化专属文件，再对每个所选负载的各深度重复两次；三深度方案在 QD16/32 达到重复平台且关联的旧有效单次成绩没有明显更高时跳过 QD64，否则继续测量。预演按 QD64 也执行的最坏情况预留写入，不包含持续写入。预演与确认绑定全部选项和最大写量。输出独立的 `results.json` 和每个负载的平台诊断，不合并旧运行、不生成完整报告，因完整评测仍未完成返回退出码 6。若只需复用已有数据、设备状态不匹配或现有连接无法观察所需指标，不应把此诊断当作解决方案。
 
+可重复提供 `--supplement-io-bytes 负载名=字节数`，为所选负载单独设置每次采样的 MiB 对齐字节上限；其余负载仍使用 `--peak-io-bytes`。按已验证吞吐和所需有效时长估算，留足不确定性；实际采样不足五秒仍不能作为合格峰值样本，不能为了省时放宽判据。所有覆盖值包含在预演工作项和确认摘要内。
+
 可用 `--peak-source <原始 results.json>` 关联同一目标的旧峰值运行：预演把源文件摘要与运行 ID 纳入确认，执行前核对设备指纹、工作文件大小、引擎和 fio 版本。结果会比较旧运行的合格单次成绩与本次重复样本，提示旧成绩显著更高的负载；两次运行的设备状态仍须单独判断，比较不会改写或合并源记录。
 
 macOS 空间不足时，`--reuse-trashed-workspace <绝对路径>` 可指定本用户废纸篓内属于同一目标的 DriveSpeed 专属工作目录。只接受标记、目标、inode、目录内容和完整已分配容量均匹配的文件；预演绑定这些身份并计入实际空闲空间和额外 1 GiB 写入安全余量。执行时在设备锁内重新核对，初始化与覆盖仍计入写入预算；运行期间监控空闲空间，触及余量即停止。文件直接留在废纸篓，不恢复其他文件、不清空废纸篓。仅 peak 或 peak-supplement 且必须给出与原文件完全一致的 `--working-file-bytes`。
