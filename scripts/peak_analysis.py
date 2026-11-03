@@ -2,7 +2,7 @@
 
 import math
 
-from workloads import active_runtime_ms, collection_status
+from workloads import MIB, active_runtime_ms, collection_status
 
 
 def assess_peak_pair(cases, minimum_seconds=5, tolerance=0.05,
@@ -87,7 +87,40 @@ def assess_peak_scan(cases, **criteria):
         result = pair(16, 32)
         if result["status"] == "increase":
             result = pair(32, 64)
-        results[workload] = result
+        best = []
+        for depth in (16, 32, 64):
+            candidates = []
+            for repeat in (1, 2):
+                case = by_name.get(f"peak_{workload}_{depth}_{repeat}")
+                if not isinstance(case, dict) or case.get("status") != "completed":
+                    continue
+                expected_rw = {"seq_read": "read", "seq_write": "write",
+                               "rand_read": "randread", "rand_write": "randwrite"}[workload]
+                expected_bs = MIB if workload.startswith("seq_") else 4096
+                if (case.get("rw"), case.get("bs"), case.get("qd")) != (expected_rw, expected_bs, depth):
+                    continue
+                data = case.get("metrics")
+                if not isinstance(data, dict):
+                    continue
+                direction = "read" if workload.endswith("read") else "write"
+                measurement = data.get(direction)
+                depths = data.get("achieved_depth")
+                if not isinstance(measurement, dict) or not isinstance(depths, dict):
+                    continue
+                rate = measurement.get("mb_s")
+                depth_key = ">=64" if depth == 64 else str(depth)
+                achieved = depths.get(depth_key)
+                if (collection_status(case) not in ("collected", "collected_irregular")
+                        or active_runtime_ms(data, case.get("rw")) < criteria.get("minimum_seconds", 5) * 1000
+                        or type(rate) not in (int, float) or not math.isfinite(rate) or rate <= 0
+                        or type(achieved) not in (int, float) or not math.isfinite(achieved)
+                        or not criteria.get("minimum_depth_percent", 25) <= achieved <= 100):
+                    continue
+                candidates.append({"mb_s": rate, "name": case["name"],
+                                   "collection_status": collection_status(case)})
+            if candidates:
+                best.append({"qd": depth, **max(candidates, key=lambda item: item["mb_s"])})
+        results[workload] = {**result, "highest_single_by_qd": best}
     status = "complete" if all(item["status"] == "plateau"
                                for item in results.values()) else "incomplete"
     return {"status": status, "workloads": results}

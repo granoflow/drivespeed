@@ -33,6 +33,21 @@ class PeakAnalysisTests(unittest.TestCase):
         cases[3]["metrics"]["read"]["mb_s"] = 150
         self.assertEqual(assess_peak_pair(cases)["status"], "unstable")
 
+    def test_scan_retains_highest_qualified_single_result(self):
+        cases = []
+        for repeat, rate in ((1, 100), (2, 130)):
+            item = case(16, rate)
+            item["name"] = f"peak_seq_read_16_{repeat}"
+            cases.append(item)
+        result = assess_peak_scan(cases)
+        self.assertEqual(result["status"], "incomplete")
+        best = result["workloads"]["seq_read"]["highest_single_by_qd"]
+        self.assertEqual(best[0]["mb_s"], 130)
+        self.assertEqual(best[0]["name"], "peak_seq_read_16_2")
+        cases[1]["metrics"]["achieved_depth"]["16"] = 1
+        result = assess_peak_scan(cases)
+        self.assertEqual(result["workloads"]["seq_read"]["highest_single_by_qd"][0]["mb_s"], 100)
+
     def test_open_ended_64_bucket_and_higher_depth(self):
         cases = [case(32, 100), case(32, 100), case(64, 101), case(64, 101)]
         for item in cases[2:]:
