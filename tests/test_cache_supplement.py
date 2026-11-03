@@ -98,23 +98,33 @@ sys.exit(7)
         with tempfile.TemporaryDirectory() as name:
             root=Path(name).resolve();target=fixtures.AuthorizationTests().target()
             target.update(path=str(root),st_dev=root.stat().st_dev,inode=root.stat().st_ino)
+            identity={'version':1,'fingerprint':'a'*64,'source':'smartctl:serial_number','attachment':'internal'}
+            source={'run_id':'old','target':target,'device_identity':identity,
+                    'tool':{'method_version':'drivespeed-peak-v1'},'cases':[],
+                    'environment':{'engine':'posixaio','fio':{'version':'fio-fixture'}},
+                    'plan':{'method_version':'drivespeed-peak-v1','file_bytes':8*GIB,
+                            'peak_criteria':{'minimum_seconds':5,'tolerance':0.05,
+                                             'minimum_depth_percent':20,'minimum_half_depth_percent':90}}}
+            source_path=root/'source.json';source_path.write_text(json.dumps(source))
             args=benchmark.parser().parse_args(['--disk',str(root),'--output',str(root/'out'),
                 '--stage','cache-supplement','--propose-write-bytes',str(80*GIB),
-                '--working-file-bytes',str(8*GIB),'--cache-runtime-seconds','300'])
+                '--working-file-bytes',str(8*GIB),'--cache-runtime-seconds','300',
+                '--peak-source',str(source_path)])
             def produced(fio,job,*unused):
                 case=counter_fixtures.evidence();case.update(job,status='completed',metrics_complete=True,stop_reason='post_drop_stable')
                 case['metrics']['read']={'bytes':0}
+                case['metrics']['write'].update(mb_s=400,iops=1,latency_us={'mean':1,'50':1,'95':1,'99':1})
                 return case
             with contextlib.ExitStack() as stack:
                 replacements={'target_info':dict(return_value=target),'check_target':dict(return_value=target),
                     'collect_hardware':dict(return_value={}),'load_reference_cache':dict(return_value=({},{})),
                     'apply_hardware_specs':{},'DeviceLock':dict(return_value=contextlib.nullcontext()),
-                    'ensure_fio':dict(return_value={'path':'not-launched','engines':'posixaio'}),
+                    'ensure_fio':dict(return_value={'path':'not-launched','engines':'posixaio','version':'fio-fixture'}),
                     'select_engine':dict(return_value='posixaio'),'observe_quality':dict(return_value={'status':'quiet_observed'}),
                     'confirm_write':dict(side_effect=lambda t,c,a,text:plan_hash(t,c,a)), 'trash_owned':{},
                     'clean_stale_workspaces':dict(return_value=[]),'run_case':dict(side_effect=produced)}
                 mocked={k:stack.enter_context(patch.object(benchmark,k,**v)) for k,v in replacements.items()}
-                stack.enter_context(patch('device_identity.collect_device_identity',return_value=None))
+                stack.enter_context(patch('device_identity.collect_device_identity',return_value=identity))
                 stack.enter_context(patch('device_identity.collect_report_identity_macos',return_value=None,create=True))
                 stack.enter_context(patch.object(benchmark.os,'ftruncate'))
                 stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
@@ -124,6 +134,7 @@ sys.exit(7)
         self.assertEqual(code,6)
         self.assertEqual(mocked['run_case'].call_count,1)
         self.assertEqual(result['cache_assessment']['status'],'observed_drop_stable')
+        self.assertEqual(result['cache_comparison']['status'],'qualified_observation')
         self.assertFalse(result['completeness']['complete'])
         self.assertEqual(result['outcome'],'partial')
         self.assertEqual(result['report'],{})

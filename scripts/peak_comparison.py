@@ -8,7 +8,8 @@ from pathlib import Path
 import stat
 
 from system_io import unsafe_path_component
-from workloads import MIB, PEAK_METHOD, PEAK_SUPPLEMENT_METHOD, case_core_missing
+from workloads import (MIB, GIB, CACHE_SUPPLEMENT_METHOD, PEAK_METHOD, PEAK_SUPPLEMENT_METHOD,
+                       cache_assessment, cache_observation, case_core_missing)
 
 
 def load_peak_source(path):
@@ -63,6 +64,55 @@ def validate_source_target(source, target, file_bytes):
         return identity
     except (KeyError, TypeError, AttributeError) as error:
         raise ValueError('Peak source conditions are incomplete') from error
+
+
+def compare_cache_run(source, supplement, source_sha256):
+    """Reassess a bound sustained-write observation without changing either run."""
+    from device_identity import validate_device_identity
+    incompatible = {'status': 'incompatible'}
+    try:
+        if (not isinstance(source_sha256, str) or len(source_sha256) != 64
+                or any(char not in '0123456789abcdef' for char in source_sha256)):
+            return incompatible
+        plan, cases = supplement['plan'], supplement['cases']
+        if (not isinstance(plan, dict) or not isinstance(cases, list) or len(cases) != 1
+                or supplement['tool']['method_version'] != CACHE_SUPPLEMENT_METHOD
+                or plan['method_version'] != CACHE_SUPPLEMENT_METHOD
+                or source['tool']['method_version'] != PEAK_METHOD
+                or source['plan']['method_version'] != PEAK_METHOD
+                or plan.get('source_peak_sha256') != source_sha256
+                or not isinstance(source.get('run_id'), str) or not source['run_id']
+                or plan.get('source_peak_run_id') != source['run_id']):
+            return incompatible
+        identity = validate_source_target(source, supplement['target'], plan['file_bytes'])
+        if (validate_device_identity(supplement['device_identity']) != identity
+                or source['environment']['engine'] != supplement['environment']['engine']
+                or source['environment']['fio']['version'] != supplement['environment']['fio']['version']):
+            return incompatible
+        jobs = plan['jobs']
+        if not isinstance(jobs, list) or len(jobs) != 1 or not isinstance(jobs[0], dict):
+            return incompatible
+        job, case = jobs[0], cases[0]
+        size, budget, duration = plan['file_bytes'], plan['write_budget'], job['runtime']
+        if (not isinstance(case, dict) or type(size) is not int or not GIB <= size <= 2**63 - 1 or size % MIB
+                or type(budget) is not int or not size <= budget <= 2**63 - 1 or budget % MIB
+                or type(duration) is not int or not 105 <= duration <= 86400
+                or plan.get('profile') != 'cache_supplement' or plan.get('max_write_bytes') != budget
+                or plan.get('max_runtime_seconds') != duration + 45
+                or (job.get('name'), job.get('rw'), job.get('bs'), job.get('qd')) != ('sustained', 'write', MIB, 16)
+                or job.get('io_bytes') != budget or job.get('initialize_bytes') != size
+                or job.get('cache_test') is not True or case.get('name') != 'sustained'):
+            return incompatible
+        missing = case_core_missing(case, job, plan)
+        assessment = cache_assessment(*cache_observation(case))
+        if missing or assessment['status'] != 'observed_drop_stable':
+            return {'status': 'unqualified', 'missing_core': missing,
+                    'observation_status': assessment['status']}
+        return {'status': 'qualified_observation', 'source_run_id': source['run_id'],
+                'post_drop_mb_s': assessment['post_cache_mb_s'], 'cause_confirmed': False,
+                'note': 'Separate runs; device state is not proven equal and no result is merged.'}
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
+        return incompatible
 
 
 def compare_peak_runs(source, supplement, source_sha256):

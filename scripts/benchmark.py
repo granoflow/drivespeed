@@ -969,6 +969,9 @@ def execute(args, text, report_text):
                 # A separate diagnostic cannot make the prior full run complete.
                 result['completeness'] = {'complete': False, 'missing_core': ['full_run']}
             elif config.get('method_version') == CACHE_SUPPLEMENT_METHOD:
+                if peak_source is not None:
+                    from peak_comparison import compare_cache_run
+                    result['cache_comparison'] = compare_cache_run(peak_source, result, peak_source_hash)
                 result['completeness'] = {'complete':False, 'missing_core':['full_run']}
             elif capacity_source is not None:
                 from capacity_check import completeness
