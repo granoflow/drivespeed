@@ -16,7 +16,7 @@ python3 scripts/benchmark.py --disk /path/to/selected-volume --stage quick --out
 
 `--stage peak` 接受 `--propose-write-bytes`、`--working-file-bytes`、`--case-write-bytes` 和 `--peak-io-bytes` 四个字节参数，必须全部显式指定并通过同一预演确认。峰值 I/O 参数对每次扫描分别限量，计划预留四种负载在 QD16、32、64 各重复两次的最坏情况写量。先初始化文件，再测常规项目与峰值，最后持续写入；有足够稳定证据时跳过该负载的 QD64。项目采样不足、深度未达标、重复不稳定或没有确认平台时保持部分结果。峰值输出保留在本地原始结果，公共投稿沿用基础工作负载。
 
-`--stage peak-supplement` 是单独记录的峰值诊断：显式提供 `--propose-write-bytes`、`--working-file-bytes`、`--peak-io-bytes`、至少一个 `--supplement-workload`（可重复，值为 `seq_read`、`seq_write`、`rand_read`、`rand_write`）和 `--supplement-depths 16,32` 或 `32,64`。计划先初始化专属文件，再对每个所选负载在两个深度各测两次；不包含持续写入。预演与确认绑定全部选项和最大写量。输出独立的 `results.json` 和每个负载的平台诊断，不合并旧运行、不生成完整报告，因完整评测仍未完成返回退出码 6。若只需复用已有数据、设备状态不匹配或现有连接无法观察所需指标，不应把此诊断当作解决方案。
+`--stage peak-supplement` 是单独记录的峰值诊断：显式提供 `--propose-write-bytes`、`--working-file-bytes`、`--peak-io-bytes`、至少一个 `--supplement-workload`（可重复，值为 `seq_read`、`seq_write`、`rand_read`、`rand_write`）和 `--supplement-depths 16,32`、`32,64` 或 `16,32,64`。计划先初始化专属文件，再对每个所选负载的各深度重复两次；三深度方案在 QD16/32 达到重复平台且关联的旧有效单次成绩没有明显更高时跳过 QD64，否则继续测量。预演按 QD64 也执行的最坏情况预留写入，不包含持续写入。预演与确认绑定全部选项和最大写量。输出独立的 `results.json` 和每个负载的平台诊断，不合并旧运行、不生成完整报告，因完整评测仍未完成返回退出码 6。若只需复用已有数据、设备状态不匹配或现有连接无法观察所需指标，不应把此诊断当作解决方案。
 
 可用 `--peak-source <原始 results.json>` 关联同一目标的旧峰值运行：预演把源文件摘要与运行 ID 纳入确认，执行前核对设备指纹、工作文件大小、引擎和 fio 版本。结果会比较旧运行的合格单次成绩与本次重复样本，提示旧成绩显著更高的负载；两次运行的设备状态仍须单独判断，比较不会改写或合并源记录。
 

@@ -121,8 +121,8 @@ def parser():
                    help="Quick actual sequential measurement, or deeper full test; legacy CLI default is full")
     p.add_argument("--supplement-workload", action="append", choices=("seq_read", "seq_write", "rand_read", "rand_write"),
                    help="Peak supplement workload; repeat for each required workload")
-    p.add_argument("--supplement-depths", choices=("16,32", "32,64"), metavar="PAIR",
-                   help="Adjacent queue-depth pair for a peak supplement")
+    p.add_argument("--supplement-depths", choices=("16,32", "32,64", "16,32,64"), metavar="DEPTHS",
+                   help="Queue depths for a peak supplement: 16,32; 32,64; or 16,32,64")
     p.add_argument("--peak-source", help="Original peak results to compare with this separate supplement")
     p.add_argument("--quick-from", help="Preserve a same-target quick result alongside the deeper test; never rerun it")
     p.add_argument(
@@ -770,16 +770,23 @@ def execute(args, text, report_text):
             result["test_directory"] = str(work)
             for job in config["jobs"]:
                 deadline.check()
-                if (config.get("method_version") == PEAK_METHOD
+                if (config.get("method_version") in (PEAK_METHOD, PEAK_SUPPLEMENT_METHOD)
                         and job.get("peak_workload") and job["qd"] == 64):
                     from peak_analysis import assess_peak_pair
                     workload = job["peak_workload"]
                     previous = {case["name"]: case for case in result["cases"]}
                     names = [f"peak_{workload}_{depth}_{repeat}"
                              for depth in (16, 32) for repeat in (1, 2)]
-                    if all(name in previous for name in names) and assess_peak_pair(
-                            [previous[name] for name in names],
-                            **config["peak_criteria"])["status"] == "plateau":
+                    assessment = (assess_peak_pair([previous[name] for name in names], **config['peak_criteria'])
+                                  if all(name in previous for name in names) else {'status':'incomplete'})
+                    skip = assessment['status'] == 'plateau'
+                    if skip and config.get('method_version') == PEAK_SUPPLEMENT_METHOD and peak_source is not None:
+                        from peak_comparison import compare_peak_runs
+                        diagnostic = dict(result, peak_supplement={workload:assessment})
+                        comparison = compare_peak_runs(peak_source, diagnostic)
+                        item = comparison.get('workloads', {}).get(workload, {})
+                        skip = comparison.get('status') == 'compared' and not item.get('earlier_higher', False)
+                    if skip:
                         case = dict(**job, status="skipped", reason="peak_plateau", series=[])
                         result["cases"].append(case)
                         progress.emit(job["name"], "skipped", force=True)
@@ -906,13 +913,22 @@ def execute(args, text, report_text):
                 "stop_reason", "bounded_test"
             )
             if config.get('method_version') == PEAK_SUPPLEMENT_METHOD:
-                from peak_analysis import assess_peak_pair
+                from peak_analysis import assess_peak_pair, assess_peak_scan
                 cases = {case['name']: case for case in result['cases']}
                 pair = [int(value) for value in supplement_depths.split(',')]
                 assessments = {}
                 for workload in supplement_workloads:
-                    names = [f'peak_{workload}_{depth}_{repeat}' for depth in pair for repeat in (1, 2)]
-                    assessments[workload] = assess_peak_pair([cases[name] for name in names], **config['peak_criteria'])
+                    if len(pair) == 3:
+                        assessment = assess_peak_scan(result['cases'], **config['peak_criteria'])['workloads'][workload]
+                        later = assessment['adjacent_pairs']['32_64']
+                        measured_64 = any(cases[f'peak_{workload}_64_{repeat}'].get('status') != 'skipped'
+                                          for repeat in (1, 2))
+                        if assessment['status'] == 'plateau' and measured_64 and later['status'] in ('increase', 'unstable', 'incomplete'):
+                            assessment = {**assessment, **later}
+                        assessments[workload] = assessment
+                    else:
+                        names = [f'peak_{workload}_{depth}_{repeat}' for depth in pair for repeat in (1, 2)]
+                        assessments[workload] = assess_peak_pair([cases[name] for name in names], **config['peak_criteria'])
                 result['peak_supplement'] = assessments
                 if peak_source is not None:
                     from peak_comparison import compare_peak_runs

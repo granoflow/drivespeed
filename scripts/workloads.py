@@ -325,7 +325,7 @@ def peak_plan(total_bytes, free_bytes, write_budget, file_bytes,
 
 def peak_supplement_plan(total_bytes, free_bytes, write_budget, file_bytes,
                          peak_io_bytes, workloads, depths, seconds=20):
-    """Reserve an independent, bounded pair of repeated peak measurements.
+    """Reserve independent, bounded repeated peak measurements.
 
     This is not a complete full run and does not merge historical samples. The
     caller selects the workloads and adjacent depths after inspecting evidence.
@@ -341,8 +341,8 @@ def peak_supplement_plan(total_bytes, free_bytes, write_budget, file_bytes,
             or any(not isinstance(w, str) or w not in specs for w in workloads)
             or len(set(workloads)) != len(workloads)):
         raise ValueError('Select distinct known peak workloads')
-    if not isinstance(depths, (tuple, list)) or tuple(depths) not in ((16, 32), (32, 64)):
-        raise ValueError('Select adjacent queue depths 16/32 or 32/64')
+    if not isinstance(depths, (tuple, list)) or tuple(depths) not in ((16, 32), (32, 64), (16, 32, 64)):
+        raise ValueError('Select queue depths 16/32, 32/64, or 16/32/64')
     if not 5 <= seconds <= 86400:
         raise ValueError('Peak sample runtime must be between five seconds and one day')
     reserve = max(10 * GIB, (total_bytes + 9) // 10)

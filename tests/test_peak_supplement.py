@@ -48,6 +48,12 @@ class PeakSupplementPlanTests(unittest.TestCase):
         self.assertEqual(config['max_write_bytes'], 8*GIB)
         self.assertEqual(config['reserve_bytes'], 100*GIB)
 
+    def test_adaptive_plan_reserves_all_depths_before_any_are_skipped(self):
+        config = peak_supplement_plan(1000*GIB, 700*GIB, 68*GIB, 8*GIB,
+                                      10*GIB, ['rand_write'], [16,32,64])
+        self.assertEqual(config['max_write_bytes'],68*GIB)
+        self.assertEqual([job['qd'] for job in config['jobs'][1:]], [16,16,32,32,64,64])
+
     def test_confirmation_digest_changes_with_depth_or_selected_workload(self):
         target = fixtures.AuthorizationTests().target()
         common = (1000*GIB, 700*GIB, 50*GIB, 8*GIB, 10*GIB)
@@ -75,13 +81,14 @@ class PeakSupplementPlanTests(unittest.TestCase):
 
 
 class PeakSupplementFlowTests(unittest.TestCase):
-    def execute_fixture(self, root, fail=False, with_source=False, wrong_identity=False):
+    def execute_fixture(self, root, fail=False, with_source=False, wrong_identity=False,
+                        adaptive=False, increasing=False, late_increase=False):
         target = fixtures.AuthorizationTests().target()
         target.update(path=str(root), st_dev=root.stat().st_dev, inode=root.stat().st_ino)
         cli = ['--disk', str(root), '--output', str(root/'out'),
             '--stage', 'peak-supplement', '--propose-write-bytes', str(8*GIB),
             '--working-file-bytes', str(8*GIB), '--peak-io-bytes', str(GIB),
-            '--supplement-workload', 'seq_read', '--supplement-depths', '16,32']
+            '--supplement-workload', 'seq_read', '--supplement-depths', '16,32,64' if adaptive else '16,32']
         identity = {'version':1, 'fingerprint':'a'*64, 'source':'smartctl:serial_number', 'attachment':'internal'}
         if with_source:
             criteria = {'minimum_seconds':5,'tolerance':.05,'minimum_depth_percent':20,'minimum_half_depth_percent':90}
@@ -94,20 +101,23 @@ class PeakSupplementFlowTests(unittest.TestCase):
         def produced(fio, job, *unused):
             if fail:
                 raise BenchError('total_timeout', 'fixture deadline', 6)
-            case = copy.deepcopy(peak_fixtures.case(job['qd'], 100))
+            rate = 140 if late_increase and job['qd'] == 64 else 120 if increasing and job['qd'] >= 32 else 100
+            case = copy.deepcopy(peak_fixtures.case(job['qd'], rate))
             case.update(job)
             if job['name'] == 'prepare':
                 case['metrics']['write']['bytes'] = job['io_bytes']
                 case['metrics']['read']['bytes'] = 0
             elif job['qd'] == 16:
                 case['metrics']['achieved_depth'] = {'8':75, '16':25, '32':0, '>=64':0}
-            else:
+            elif job['qd'] == 32:
                 case['metrics']['achieved_depth'] = {'16':75, '32':25, '>=64':0}
+            else:
+                case['metrics']['achieved_depth'] = {'32':75, '>=64':25}
             if job['name'] != 'prepare':
                 case['metrics']['runtime_ms'] = 20000
                 case['metrics']['read'].update(runtime_ms=20000, iops=100,
                     latency_us={'mean':1,'50':1,'95':1,'99':1})
-                case['series'] = [{'seconds':n,'direction':'read','mb_s':100} for n in range(1,21)]
+                case['series'] = [{'seconds':n,'direction':'read','mb_s':rate} for n in range(1,21)]
             return case
         with contextlib.ExitStack() as stack:
             replacements = {'target_info':dict(return_value=target), 'check_target':dict(return_value=target),
@@ -136,6 +146,36 @@ class PeakSupplementFlowTests(unittest.TestCase):
         self.assertEqual(result['completeness'], {'complete':False, 'missing_core':['full_run']})
         self.assertEqual(result['peak_supplement']['seq_read']['status'], 'plateau')
         self.assertEqual(result['report'], {})
+
+    def test_adaptive_scan_skips_64_after_repeated_plateau(self):
+        with tempfile.TemporaryDirectory() as name:
+            code, result, mocked = self.execute_fixture(Path(name).resolve(), adaptive=True)
+        self.assertEqual(code,6)
+        self.assertEqual(mocked['run_case'].call_count,5)
+        self.assertEqual(result['peak_supplement']['seq_read']['status'],'plateau')
+        self.assertEqual([case['reason'] for case in result['cases'] if case['qd']==64],['peak_plateau']*2)
+
+    def test_adaptive_scan_continues_to_64_after_a_repeated_increase(self):
+        with tempfile.TemporaryDirectory() as name:
+            code, result, mocked = self.execute_fixture(Path(name).resolve(), adaptive=True, increasing=True)
+        self.assertEqual(code,6)
+        self.assertEqual(mocked['run_case'].call_count,7)
+        self.assertEqual(result['peak_supplement']['seq_read']['depths'],[32,64])
+        self.assertEqual(result['peak_supplement']['seq_read']['status'],'plateau')
+
+    def test_adaptive_scan_does_not_skip_when_an_earlier_qualified_sample_is_higher(self):
+        with tempfile.TemporaryDirectory() as name:
+            code,result,mocked = self.execute_fixture(Path(name).resolve(),adaptive=True,with_source=True)
+        self.assertEqual(code,6)
+        self.assertEqual(mocked['run_case'].call_count,7)
+        self.assertTrue(result['peak_comparison']['workloads']['seq_read']['earlier_higher'])
+
+    def test_later_increase_overrides_the_initial_pair_plateau(self):
+        with tempfile.TemporaryDirectory() as name:
+            _,result,mocked = self.execute_fixture(Path(name).resolve(),adaptive=True,with_source=True,late_increase=True)
+        self.assertEqual(mocked['run_case'].call_count,7)
+        self.assertEqual(result['peak_supplement']['seq_read']['status'],'increase')
+        self.assertEqual(result['peak_supplement']['seq_read']['depths'],[32,64])
 
     def test_timeout_stops_remaining_jobs_and_keeps_partial_evidence(self):
         with tempfile.TemporaryDirectory() as name:
