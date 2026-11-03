@@ -84,6 +84,69 @@ class FakeHTTP:
         return receipt(p)
 
 
+class LegacyReplacementTests(unittest.TestCase):
+    def setUp(self):
+        self.new = CommunityStore(state_dir()); self.old = CommunityStore(state_dir())
+        for store, identifier_value in ((self.new, ID), (self.old, REMOTE_ID)):
+            value = publishable_payload(); value['submission_id'] = identifier_value
+            store.create(value, 'fixture-run-' + identifier_value, '/fixture')
+            store.consent(identifier_value, POLICY['notice_version'])
+            store.credentials(identifier_value, ORIGIN, create=True)
+            store.db.execute("UPDATE reports SET state='accepted' WHERE id=?", (identifier_value,))
+        self.addCleanup(self.new.close); self.addCleanup(self.old.close)
+        self.calls = []
+        outer = self
+        class HTTP:
+            origin = ORIGIN
+            def request(self, method, path, body=None, headers=None, timeout=20):
+                outer.calls.append((method, path, body, headers))
+                if method == 'GET':
+                    result = receipt(outer.new.payload(ID), similar=False)
+                    result['receipt'].update(visibility='public', reason_code=None,
+                                             public_url=ORIGIN+'/benchmarks/'+ID)
+                    result['account'] = {'state': 'active', 'contact_url': None}
+                    return result
+                return {'schema_version': 1, 'status': 'replaced',
+                        'old_submission_id': REMOTE_ID, 'new_submission_id': ID}
+        self.client = CommunityClient(self.new, HTTP())
+
+    def test_preview_is_offline_and_confirm_uses_both_existing_credentials(self):
+        value = self.client.replace_legacy(self.old, REMOTE_ID, ID)
+        self.assertEqual(value['status'], 'preview'); self.assertEqual(self.calls, [])
+        value = self.client.replace_legacy(self.old, REMOTE_ID, ID, confirm=True)
+        self.assertEqual(value['status'], 'replaced')
+        self.assertEqual([c[0] for c in self.calls], ['GET', 'POST'])
+        headers = self.calls[-1][3]
+        self.assertTrue(headers['Authorization'].startswith('Bearer '))
+        self.assertTrue(headers['X-DriveSpeed-Legacy-Authorization'].startswith('Bearer '))
+        self.assertNotEqual(headers['Authorization'], headers['X-DriveSpeed-Legacy-Authorization'])
+        self.assertNotIn(headers['Authorization'], json.dumps(value))
+        self.assertNotIn(headers['X-DriveSpeed-Legacy-Authorization'], json.dumps(value))
+
+    def test_nonaccepted_and_wrong_origin_never_send(self):
+        self.new.db.execute("UPDATE reports SET state='pending' WHERE id=?", (ID,))
+        with self.assertRaises(CommunityError):
+            self.client.replace_legacy(self.old, REMOTE_ID, ID, confirm=True)
+        self.assertEqual(self.calls, [])
+        self.new.db.execute("UPDATE reports SET state='accepted' WHERE id=?", (ID,))
+        self.client.http.origin = 'https://other.invalid'
+        with self.assertRaises(CommunityError):
+            self.client.replace_legacy(self.old, REMOTE_ID, ID, confirm=True)
+        self.assertEqual(self.calls, [])
+
+    def test_unknown_post_outcome_is_not_automatically_retried(self):
+        original = self.client.http.request
+        def uncertain(method, path, body=None, headers=None, timeout=20):
+            if method == 'POST':
+                self.calls.append((method, path, body, headers))
+                raise NetworkError('network_unavailable')
+            return original(method, path, body, headers, timeout)
+        self.client.http.request = uncertain
+        with self.assertRaises(NetworkError):
+            self.client.replace_legacy(self.old, REMOTE_ID, ID, confirm=True)
+        self.assertEqual([c[0] for c in self.calls], ['GET', 'POST'])
+
+
 class ClientTests(unittest.TestCase):
     def setUp(self):
         locale = patch.object(community, "language_default", return_value="en")

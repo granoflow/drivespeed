@@ -57,6 +57,13 @@ def parser():
     compare = commands.add_parser("compare", parents=[common], help="Offline comparison facts from typed reference snapshots; no network or rankings")
     compare.add_argument("--input", required=True, help="Preserved original result for this exact submission")
     compare.add_argument("--submission-id", required=True)
+    replacement = commands.add_parser('replace-legacy', parents=[common],
+        help='Preview or explicitly link a legacy report to an already public successor')
+    replacement.add_argument('--submission-id', required=True, help='New public report ID')
+    replacement.add_argument('--old-submission-id', required=True, help='Explicit old legacy report ID')
+    replacement.add_argument('--old-state-dir', required=True, help='Existing private state containing the old report credential')
+    replacement.add_argument('--confirm', action='store_true', help='Send the explicit owner-authorized replacement')
+    replacement.add_argument('--test-origin', help='Developer fixtures only: explicit loopback origin')
     for name in ("publish", "retry", "receipt", "withdraw"):
         network = commands.add_parser(name, parents=[common], help={
             "publish": "Share this consented snapshot; shows a browser URL and waits up to 10 minutes",
@@ -249,6 +256,14 @@ def main(argv=None):
             elif operation == "compare":
                 from community_comparison import build_comparison
                 output = build_comparison(store, result, args.submission_id)
+            elif operation == 'replace-legacy':
+                old_path = Path(args.old_state_dir).expanduser().absolute()
+                if not (old_path / 'community.sqlite3').is_file():
+                    raise CommunityError('not_found')
+                with CommunityStore(old_path) as old_store:
+                    client = CommunityClient(store, CommunityHTTP(args.test_origin))
+                    output = client.replace_legacy(old_store, args.old_submission_id,
+                                                   args.submission_id, args.confirm)
             elif operation in ("publish", "retry", "receipt", "withdraw"):
                 def show_authorization(event):
                     print(json.dumps({"schema_version": 1, "operation": operation, "submission_id": args.submission_id,

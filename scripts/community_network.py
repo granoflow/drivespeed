@@ -9,6 +9,7 @@ import socket
 import threading
 import time
 import uuid
+from contextlib import ExitStack
 from urllib.parse import urlsplit
 
 from community_data import CommunityError, POLICY, parse_json, validate_payload, transport, require_report_data, require_publication_identity
@@ -277,6 +278,36 @@ class CommunityClient:
                 raise NetworkError("invalid_response")
             self.store.mark_withdrawn(submission_id)
             return {"submission_id": submission_id, "status": "withdrawn", "quota_refunded": False}
+
+    def replace_legacy(self, old_store, old_id, new_id, confirm=False):
+        """Link explicitly selected legacy/new reports using both capabilities."""
+        identifier(old_id); identifier(new_id)
+        if old_id == new_id:
+            raise CommunityError('invalid_arguments', ['old_submission_id'])
+        old_row, new_row = old_store._report(old_id), self.store._report(new_id)
+        if not confirm:
+            return {'status': 'preview', 'old_submission_id': old_id, 'new_submission_id': new_id,
+                    'old_state': old_row['state'], 'new_state': new_row['state'], 'remote_unchanged': True}
+        if old_row['state'] != 'accepted' or new_row['state'] != 'accepted':
+            raise CommunityError('replacement_not_public')
+        locks = sorted([(str(old_store.directory), old_id, old_store),
+                        (str(self.store.directory), new_id, self.store)], key=lambda item: item[:2])
+        with ExitStack() as stack:
+            for _, report_id, source in locks:
+                stack.enter_context(source.network_lock(report_id))
+            old_token, _ = old_store.credentials(old_id, self.http.origin)
+            new_token, checksum = self.store.credentials(new_id, self.http.origin)
+            if self._receipt(new_id, new_token, checksum)['visibility'] != 'public':
+                raise CommunityError('replacement_not_public')
+            response = self._call('POST', '/api/v1/benchmarks/' + new_id + '/replace-legacy',
+                                  {'old_submission_id': old_id},
+                                  {'Authorization': 'Bearer ' + new_token,
+                                   'X-DriveSpeed-Legacy-Authorization': 'Bearer ' + old_token})
+            _object(response, ('schema_version', 'status', 'old_submission_id', 'new_submission_id'))
+            if response != {'schema_version': 1, 'status': 'replaced',
+                            'old_submission_id': old_id, 'new_submission_id': new_id}:
+                raise NetworkError('invalid_response')
+            return {'status': 'replaced', 'old_submission_id': old_id, 'new_submission_id': new_id}
 
     def publish(self, submission_id):
         identifier(submission_id)

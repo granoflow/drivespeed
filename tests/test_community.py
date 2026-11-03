@@ -152,6 +152,9 @@ class ProjectionTests(unittest.TestCase):
         original['hardware']['controller'] = {'model': None, 'source': 'unavailable'}
         payload = data.project_result(original, 'https://x.com/fixture_user', submission_id=ID)
         self.assertEqual(data.require_publication_identity(payload)['storage']['connection'], 'Apple Fabric')
+        payload['device_identity']['attachment'] = 'external'
+        with self.assertRaises(data.CommunityError):
+            data.require_publication_identity(payload)
 
     def test_missing_historical_parameters_are_not_filled_from_current_machine(self):
         for field in ("profile", "method_version", "os_version", "command"):

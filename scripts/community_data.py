@@ -357,6 +357,8 @@ def require_publication_identity(payload):
     interface = normalise_interface(payload['storage']['connection'] or '')
     if interface['status'] != 'known':
         _fail('storage.connection', 'missing_parameters')
+    if interface['type_id'] == 'apple-fabric' and identity.get('attachment') != 'internal':
+        _fail('storage.connection', 'missing_parameters')
     controller = payload['hardware']['controller']['model']
     controller_key = ' '.join(unicodedata.normalize('NFKC', controller or '').lower().split())
     internal = identity.get('attachment') == 'internal' and (interface['type_id'].startswith(('pcie', 'sata'))
