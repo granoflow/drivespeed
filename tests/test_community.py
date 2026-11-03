@@ -116,10 +116,11 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(next(item for item in projected["cases"] if item["name"] == "seq_read_q")["read"]["mb_s"], 99)
         self.assertFalse(any(case["name"].startswith("peak_") for case in projected["cases"]))
         data.validate_payload(projected)
-        with patch("workloads.peak_completeness",
-                   return_value={"complete": False, "missing_core": ["peak.plateau"]}):
-            with self.assertRaises(data.CommunityError):
-                data.project_result(original, "https://x.com/fixture_user", submission_id=ID)
+        partial = copy.deepcopy(original)
+        partial["outcome"] = "partial"
+        with patch("workloads.case_core_missing", return_value=[]):
+            projected = data.project_result(partial, "https://x.com/fixture_user", submission_id=ID)
+        self.assertEqual(projected["outcome"], "partial")
 
     def test_projection_is_whitelisted_and_does_not_mutate_source(self):
         original = local_result()
@@ -132,6 +133,24 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(result["measured_at_device"], "2026-10-28T12:00:00.123456Z")
         self.assertIsNone(result["cases"][0]["read"]["latency_us"]["mean"])
         self.assertIsNone(result["cases"][0]["write"]["mb_s"])
+
+    def test_external_pcie_protocol_cannot_stand_in_for_unknown_host_interface(self):
+        original = local_result()
+        original['target']['protocol'] = 'PCI-Express'
+        original['device_identity'] = {'attachment': 'external'}
+        with self.assertRaises(data.CommunityError) as raised:
+            data.project_result(original, 'https://x.com/fixture_user', submission_id=ID)
+        self.assertEqual(raised.exception.code, 'missing_parameters')
+        self.assertIn('hardware.access_interface', raised.exception.fields)
+
+    def test_reported_internal_apple_fabric_does_not_require_external_controller(self):
+        original = publishable_result()
+        original['device_identity']['attachment'] = 'internal'
+        original['target']['protocol'] = 'Apple Fabric'
+        original['hardware'].pop('access_interface')
+        original['hardware']['controller'] = {'model': None, 'source': 'unavailable'}
+        payload = data.project_result(original, 'https://x.com/fixture_user', submission_id=ID)
+        self.assertEqual(data.require_publication_identity(payload)['storage']['connection'], 'Apple Fabric')
 
     def test_missing_historical_parameters_are_not_filled_from_current_machine(self):
         for field in ("profile", "method_version", "os_version", "command"):

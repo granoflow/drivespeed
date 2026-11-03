@@ -206,7 +206,7 @@ def collect_hardware(
             try:
                 from mac_ancestry import mac_access_facts
                 raw = subprocess.check_output(['ioreg', '-a', '-l', '-p', 'IOService'], timeout=20)
-                if len(raw) <= 16_777_216:
+                if len(raw) <= 64 * 1024 * 1024:
                     access = mac_access_facts(plistlib.loads(raw), target['physical_devices'], profile)
                     if access:
                         if not hardware['controller'].get('model'):

@@ -69,6 +69,18 @@ class MacTunnelTests(unittest.TestCase):
         self.assertEqual(result['controller']['model'], 'ASMedia 246x')
         self.assertEqual(result['access_interface']['name'], 'USB4 40 Gbps')
 
+    def test_large_registry_is_processed_with_a_bounded_limit(self):
+        registry, profile = fixture()
+        class SizedRegistry:
+            def __init__(self, size): self.size = size
+            def __len__(self): return self.size
+        for size, matched in ((22 * 1024 * 1024, True), (65 * 1024 * 1024, False)):
+            with self.subTest(size=size), patch('hardware.platform.system', return_value='Darwin'), \
+                 patch('hardware.subprocess.check_output', side_effect=[json.dumps(profile).encode(), SizedRegistry(size)]), \
+                 patch('hardware.plistlib.loads', return_value=registry):
+                result = hardware.collect_hardware({'physical_devices': ['disk8']})
+            self.assertEqual(result.get('access_interface', {}).get('name') == 'USB4 40 Gbps', matched)
+
 
 if __name__ == '__main__':
     unittest.main()

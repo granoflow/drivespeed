@@ -359,7 +359,8 @@ def require_publication_identity(payload):
         _fail('storage.connection', 'missing_parameters')
     controller = payload['hardware']['controller']['model']
     controller_key = ' '.join(unicodedata.normalize('NFKC', controller or '').lower().split())
-    internal = identity.get('attachment') == 'internal' and interface['type_id'].startswith(('pcie', 'sata'))
+    internal = identity.get('attachment') == 'internal' and (interface['type_id'].startswith(('pcie', 'sata'))
+                                                              or interface['type_id'] == 'apple-fabric')
     if controller_key in ('', 'unknown', '未知', 'unavailable') and not internal:
         _fail('hardware.controller.model', 'missing_parameters')
     return payload
@@ -378,6 +379,10 @@ def project_result(result, profile_url, intro="", submission_id=None):
     target = result.get("target", {})
     access_interface = result["hardware"].get("access_interface")
     connection = target.get("protocol")
+    identity = result.get('device_identity')
+    if (isinstance(identity, dict) and identity.get('attachment') == 'external'
+            and connection == 'PCI-Express' and access_interface is None):
+        _fail('hardware.access_interface', 'missing_parameters')
     if access_interface is not None:
         from interface_types import confirmed_interface
         try:
@@ -391,14 +396,6 @@ def project_result(result, profile_url, intro="", submission_id=None):
     if method not in ("drivespeed-file-v1", *AUTO_METHODS, PEAK_METHOD, *QUICK_METHODS):
         _fail("tool.method_version", "missing_parameters")
     automatic = method in (*AUTO_METHODS, PEAK_METHOD, *QUICK_METHODS)
-    if method == PEAK_METHOD:
-        from workloads import peak_completeness
-        try:
-            qualified = peak_completeness(result)
-        except (TypeError, KeyError, AttributeError, ValueError):
-            _fail("cases")
-        if not qualified["complete"]:
-            raise CommunityError("validation_failed", qualified["missing_core"])
     if automatic:
         from workloads import case_core_missing, collection_status
         try:

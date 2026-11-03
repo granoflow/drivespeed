@@ -10,6 +10,11 @@ from interface_types import normalise_interface
 
 
 class InterfaceTypesTests(unittest.TestCase):
+    def test_apple_fabric_preserves_the_reported_label_and_is_not_pcie(self):
+        item = normalise_interface('Apple Fabric')
+        self.assertEqual(item['type_id'], 'apple-fabric')
+        self.assertEqual(item['name'], 'Apple Fabric')
+
     def test_confirmed_cli_interface_reaches_upload_without_overriding_the_system_protocol(self):
         import benchmark
         import hardware

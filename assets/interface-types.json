@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 1,
+  "revision": 2,
   "purpose": "Access-interface names and explicit aliases; never inferred from benchmark speed or connector shape",
   "items": [
     {
@@ -516,6 +516,15 @@
       "evidence_urls": [
         "https://www.sdcard.org/developers/sd-standard-overview/"
       ]
+    },
+    {
+      "id": "apple-fabric",
+      "family": "apple-fabric",
+      "protocol": "apple-fabric",
+      "label": {"zh": "Apple Fabric", "en": "Apple Fabric"},
+      "aliases": ["Apple Fabric"],
+      "nominal_bps": null,
+      "evidence_urls": ["https://developer.apple.com/videos/play/tech-talks/110147/"]
     },
     {
       "id": "mmc",
