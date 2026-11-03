@@ -207,6 +207,14 @@ class PeakSupplementFlowTests(unittest.TestCase):
         self.assertEqual(mocked['run_case'].call_count,7)
         self.assertTrue(result['peak_comparison']['workloads']['seq_read']['earlier_higher'])
 
+    def test_adaptive_scan_continues_when_source_comparison_has_no_qualified_workload(self):
+        with tempfile.TemporaryDirectory() as name, patch('peak_comparison.compare_peak_runs',
+                return_value={'status':'compared', 'workloads':{}}):
+            code, result, mocked = self.execute_fixture(Path(name).resolve(), adaptive=True, with_source=True)
+        self.assertEqual(code, 6)
+        self.assertEqual(mocked['run_case'].call_count, 7)
+        self.assertFalse(any(case.get('reason') == 'peak_plateau' for case in result['cases'] if case['qd'] == 64))
+
     def test_later_increase_overrides_the_initial_pair_plateau(self):
         with tempfile.TemporaryDirectory() as name:
             _,result,mocked = self.execute_fixture(Path(name).resolve(),adaptive=True,with_source=True,late_increase=True)

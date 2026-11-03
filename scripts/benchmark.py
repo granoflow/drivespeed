@@ -818,7 +818,7 @@ def execute(args, text, report_text):
                         diagnostic = dict(result, peak_supplement={workload:assessment})
                         comparison = compare_peak_runs(peak_source, diagnostic)
                         item = comparison.get('workloads', {}).get(workload, {})
-                        skip = comparison.get('status') == 'compared' and not item.get('earlier_higher', False)
+                        skip = comparison.get('status') == 'compared' and item.get('earlier_higher') is False
                     if skip:
                         case = dict(**job, status="skipped", reason="peak_plateau", series=[])
                         result["cases"].append(case)
