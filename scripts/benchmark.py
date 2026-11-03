@@ -55,6 +55,8 @@ from workloads import (
     peak_completeness,
     case_core_missing,
     active_runtime_ms,
+    write_counter_samples,
+    cache_observation,
 )
 from write_allowance import RunWriteProtection as WriteAllowance, plan_hash
 from run_deadline import RunDeadline
@@ -407,6 +409,8 @@ def run_case(fio, job, config, engine, output, work, target, progress):
             if not objects:
                 raise ValueError("fio produced no JSON measurements")
             case["metrics"] = metrics(objects[-1])
+            if job.get('cache_test') and config.get('method_version') == PEAK_METHOD:
+                case['cache_write_counters_v1'] = write_counter_samples(objects)
             completed = sum(case["metrics"][d]["bytes"] for d in ("read", "write"))
             if not completed:
                 raise ValueError("fio completed zero I/O")
@@ -855,9 +859,11 @@ def execute(args, text, report_text):
             )
             if any(c.get("collection_status") == "collected_irregular" for c in result["cases"]):
                 result["notes"].append("sampling_irregular")
-            timing = collection_status(sustained) if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD) else None
-            result["sustained_summary"] = sustained_summary(sustained.get("series", []), sampling_status=timing)
-            result["cache_assessment"] = cache_assessment(sustained.get("series", []), sampling_status=timing)
+            points, timing = cache_observation(sustained)
+            if config.get("method_version") not in (*AUTO_METHODS, PEAK_METHOD):
+                timing = None
+            result["sustained_summary"] = sustained_summary(points, sampling_status=timing)
+            result["cache_assessment"] = cache_assessment(points, sampling_status=timing)
             result["cache_assessment"]["stop_reason"] = sustained.get(
                 "stop_reason", "bounded_test"
             )

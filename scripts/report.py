@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from progress import ASSETS, language_default, messages
-from workloads import sustained_summary, cache_assessment, job_label, collection_status, core_completeness, peak_completeness
+from workloads import sustained_summary, cache_assessment, job_label, collection_status, core_completeness, peak_completeness, cache_observation
 from performance_rating import link_reference, component_summary, upgrade_parameters
 from reference_data import (
     load_reference_data,
@@ -926,9 +926,11 @@ def render_report(result, output, language, text, requested_format="html", compa
     mandatory_cache = result.get("tool", {}).get("method_version") in (AUTO_METHOD, PEAK_METHOD)
     completeness = (peak_completeness(result) if result.get("tool", {}).get("method_version") == PEAK_METHOD
                     else core_completeness(result) if mandatory_cache else result.get("completeness", {}))
-    timing = collection_status(sustained_case) if automatic else None
+    cache_points, timing = cache_observation(sustained_case)
+    if not automatic:
+        timing = None
     limited_windows = timing not in (None, "collected")
-    assessment = (cache_assessment(sustained_case.get("series", []), sampling_status=timing)
+    assessment = (cache_assessment(cache_points, sampling_status=timing)
                   if limited_windows or mandatory_cache else result.get("cache_assessment") or cache_assessment(sustained_case.get("series", [])))
     cards = []
     for name, direction in [
@@ -947,10 +949,10 @@ def render_report(result, output, language, text, requested_format="html", compa
             if value is not None:
                 cards.append(card(text[case_name], number(value), case_name))
     short_cards, cards = cards, []
-    summary = (sustained_summary(sustained_case.get("series", []), sampling_status=timing)
+    summary = (sustained_summary(cache_points, sampling_status=timing)
                if limited_windows else result.get("sustained_summary") or sustained_summary([]))
     if automatic and not limited_windows:
-        qualified = sustained_summary(sustained_case.get("series", []), sampling_status=timing)
+        qualified = sustained_summary(cache_points, sampling_status=timing)
         summary = dict(summary, initial_mb_s=qualified["initial_mb_s"], minimum_5s_mb_s=qualified["minimum_5s_mb_s"])
     summary_labels = [
         ("initial_mb_s", "initial"),

@@ -76,7 +76,9 @@ def _source_rates(source):
     if len(sustained) != 1:
         raise ValueError('Source sustained measurement is ambiguous')
     case = sustained[0]
-    assessed = cache_assessment(case.get('series', []), sampling_status=collection_status(case))
+    from workloads import cache_observation
+    points, timing = cache_observation(case)
+    assessed = cache_assessment(points, sampling_status=timing)
     write = assessed.get('post_cache_mb_s')
     if assessed.get('status') != 'observed_drop_stable' or type(write) not in (int, float) or not math.isfinite(write) or write <= 0:
         raise ValueError('A measured stable post-cache write speed is required')

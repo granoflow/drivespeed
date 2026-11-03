@@ -475,13 +475,14 @@ def project_result(result, profile_url, intro="", submission_id=None):
         cache = None
         if local.get("cache_test") or local.get('name') == 'sustained' and 'links' in result.get('hardware', {}):
             if method in (AUTO_METHOD, PEAK_METHOD):
-                from workloads import cache_assessment
-                assessed = cache_assessment(local.get("series", []), sampling_status=collection_status(local))
+                from workloads import cache_assessment, cache_observation
+                cache_points, cache_timing = cache_observation(local)
+                assessed = cache_assessment(cache_points, sampling_status=cache_timing)
             else:
                 assessed = result.get("cache_assessment", {})
             if not isinstance(assessed, dict):
                 _fail("cache_assessment")
-            timing_ok = not automatic or collection_status(local) == "collected"
+            timing_ok = not automatic or (cache_timing if method in (AUTO_METHOD, PEAK_METHOD) else collection_status(local)) == "collected"
             observed = assessed.get("status") == "observed_drop_stable" and local.get("status") == "completed" and timing_ok
             cache = {"status": "observed" if observed else "incomplete" if not timing_ok else "not_observed" if assessed.get("status") == "no_drop_observed" else "incomplete",
                      "capacity_estimate_bytes": assessed.get("cache_capacity_estimate_bytes") if observed else None,

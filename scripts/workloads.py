@@ -625,6 +625,55 @@ def collection_status(case):
     return "short_window" if max(durations) < interval_seconds or not series else "collected"
 
 
+def write_counter_samples(objects):
+    """Extract cumulative fio status counters; reject resets and ambiguous times."""
+    if not isinstance(objects, list) or len(objects) > 20000:
+        raise ValueError('Invalid fio status snapshot count')
+    result = []
+    for item in objects:
+        data = metrics(item)
+        runtime = data['write']['runtime_ms']
+        count = data['write']['bytes']
+        if runtime == 0 and count == 0:
+            continue
+        if runtime <= 0:
+            raise ValueError('Invalid write status runtime')
+        sample = {'runtime_ms': runtime, 'bytes': count}
+        if result and sample == result[-1]:
+            continue
+        if result and (runtime <= result[-1]['runtime_ms'] or count < result[-1]['bytes']):
+            raise ValueError('Fio status counters reset or overlap')
+        result.append(sample)
+    return result
+
+
+def cache_observation(case):
+    """Return cache series and qualification; old results keep their old source."""
+    counters = case.get('cache_write_counters_v1')
+    if counters is None:
+        return case.get('series', []), collection_status(case)
+    data = case.get('metrics', {})
+    write = data.get('write', {}) if isinstance(data, dict) else {}
+    if (not isinstance(counters, list) or not counters or len(counters) > 20000
+            or not isinstance(write, dict)):
+        return [], 'collection_incomplete'
+    rows, last_t, last_b = [], 0, 0
+    for item in counters:
+        if not isinstance(item, dict):
+            return [], 'collection_incomplete'
+        t, b = item.get('runtime_ms'), item.get('bytes')
+        if (type(t) is not int or type(b) is not int or t <= last_t or b < last_b
+                or b > 2**64 - 1 or t > 2**64 - 1):
+            return [], 'collection_incomplete'
+        rows.append({'seconds': t / 1000, 'direction': 'write',
+                     'mb_s': (b - last_b) / (t - last_t) / 1000})
+        last_t, last_b = t, b
+    if last_t != write.get('runtime_ms') or last_b != write.get('bytes'):
+        return [], 'collection_incomplete'
+    candidate = dict(case, series=rows)
+    return rows, collection_status(candidate)
+
+
 def case_core_missing(case, job, config):
     """Qualification shared by the runner and offline public projection."""
     name, missing = job["name"], []
@@ -666,14 +715,15 @@ def case_core_missing(case, job, config):
         if written < config.get("file_bytes", 0):
             missing.append("sustained.initialization")
         if config.get("method_version") in (AUTO_METHOD, PEAK_METHOD):
-            assessed = cache_assessment(case.get("series", []), sampling_status=collection_status(case))
+            points, timing = cache_observation(case)
+            assessed = cache_assessment(points, sampling_status=timing)
             speed = assessed.get("post_cache_mb_s")
-            if (collection_status(case) != "collected" or assessed["status"] != "observed_drop_stable"
+            if (timing != "collected" or assessed["status"] != "observed_drop_stable"
                     or type(speed) not in (int, float) or not math.isfinite(speed) or speed <= 0):
                 missing.append("sustained.post_cache_stability")
         if written < job["io_bytes"] and not (
             case.get("stop_reason") == "post_drop_stable"
-            and cache_assessment(case.get("series", []), sampling_status=collection_status(case)
+            and cache_assessment(cache_observation(case)[0], sampling_status=cache_observation(case)[1]
                                  if config.get("method_version") in (*AUTO_METHODS, PEAK_METHOD) else None)["status"] == "observed_drop_stable"
         ):
             missing.append("sustained.endpoint")
