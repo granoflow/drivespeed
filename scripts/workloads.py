@@ -742,7 +742,7 @@ def peak_completeness(result):
         if name in base_names - {"prepare", "mixed", "sustained_read", "sustained"}:
             case = observed[name]
             if (active_runtime_ms(case.get("metrics", {}), case.get("rw")) < 5000
-                    or collection_status(case) != "collected"):
+                    or collection_status(case) not in ("collected", "collected_irregular")):
                 missing.append(name + ".sampling")
     for name in scan_names:
         if name not in observed or name not in expected:

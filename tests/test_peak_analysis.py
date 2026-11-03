@@ -48,6 +48,13 @@ class PeakAnalysisTests(unittest.TestCase):
         result = assess_peak_scan(cases)
         self.assertEqual(result["workloads"]["seq_read"]["highest_single_by_qd"][0]["mb_s"], 100)
 
+    def test_irregular_log_intervals_preserve_final_aggregate_comparison(self):
+        cases = [case(16, 100), case(16, 100), case(32, 101), case(32, 101)]
+        cases[0]["series"][1]["seconds"] = 2.1
+        self.assertEqual(assess_peak_pair(cases)["status"], "plateau")
+        cases[0]["series"][1]["seconds"] = 1
+        self.assertEqual(assess_peak_pair(cases)["status"], "incomplete")
+
     def test_open_ended_64_bucket_and_higher_depth(self):
         cases = [case(32, 100), case(32, 100), case(64, 101), case(64, 101)]
         for item in cases[2:]:

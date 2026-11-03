@@ -35,7 +35,8 @@ def assess_peak_pair(cases, minimum_seconds=5, tolerance=0.05,
     direction = "read" if signature[0] in ("read", "randread") else "write"
     rates = []
     for case in cases:
-        if case.get("status") != "completed" or collection_status(case) != "collected":
+        if (case.get("status") != "completed"
+                or collection_status(case) not in ("collected", "collected_irregular")):
             return result
         metrics = case.get("metrics", {})
         if not isinstance(metrics, dict):
