@@ -520,7 +520,7 @@ def project_result(result, profile_url, intro="", submission_id=None):
 def preview(payload):
     """Readable fields only; deliberately omit hashes and transport text."""
     validate_payload(payload)
-    return {"destination": POLICY["destination"], "tested_on": payload["tested_on"], "tested_at_device": payload["measured_at_device"], "method": payload["tool"], "devices": payload["hardware"],
+    return {"destination": POLICY["destination"], "tested_on": payload["tested_on"], "tested_at_device": payload["measured_at_device"], "method": payload["tool"], "outcome": payload['outcome'], "devices": payload["hardware"],
             **({'assessment': payload['assessment']} if 'assessment' in payload else {}),
             "conditions": {"storage": payload["storage"], "environment": payload["environment"], "plan": payload["plan"]},
             "measurements": payload["cases"], "contributor": payload["attribution"],

@@ -121,6 +121,7 @@ class ProjectionTests(unittest.TestCase):
         with patch("workloads.case_core_missing", return_value=[]):
             projected = data.project_result(partial, "https://x.com/fixture_user", submission_id=ID)
         self.assertEqual(projected["outcome"], "partial")
+        self.assertEqual(data.preview(projected)['outcome'], 'partial')
 
     def test_projection_is_whitelisted_and_does_not_mutate_source(self):
         original = local_result()
