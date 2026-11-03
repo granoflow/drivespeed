@@ -816,7 +816,7 @@ def execute(args, text, report_text):
                     if skip and config.get('method_version') == PEAK_SUPPLEMENT_METHOD and peak_source is not None:
                         from peak_comparison import compare_peak_runs
                         diagnostic = dict(result, peak_supplement={workload:assessment})
-                        comparison = compare_peak_runs(peak_source, diagnostic)
+                        comparison = compare_peak_runs(peak_source, diagnostic, peak_source_hash)
                         item = comparison.get('workloads', {}).get(workload, {})
                         skip = comparison.get('status') == 'compared' and item.get('earlier_higher') is False
                     if skip:
@@ -965,7 +965,7 @@ def execute(args, text, report_text):
                 result['peak_supplement'] = assessments
                 if peak_source is not None:
                     from peak_comparison import compare_peak_runs
-                    result['peak_comparison'] = compare_peak_runs(peak_source, result)
+                    result['peak_comparison'] = compare_peak_runs(peak_source, result, peak_source_hash)
                 # A separate diagnostic cannot make the prior full run complete.
                 result['completeness'] = {'complete': False, 'missing_core': ['full_run']}
             elif config.get('method_version') == CACHE_SUPPLEMENT_METHOD:

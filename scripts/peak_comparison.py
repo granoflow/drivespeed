@@ -65,8 +65,8 @@ def validate_source_target(source, target, file_bytes):
         raise ValueError('Peak source conditions are incomplete') from error
 
 
-def compare_peak_runs(source, supplement):
-    """Compare qualified single samples, never promote either run to complete."""
+def compare_peak_runs(source, supplement, source_sha256):
+    """Compare qualified samples only against their frozen source bytes."""
     from peak_analysis import assess_peak_pair, assess_peak_scan, select_qd16_case, qd16_criteria
     from device_identity import validate_device_identity
     if not isinstance(source, dict) or not isinstance(supplement, dict):
@@ -79,6 +79,11 @@ def compare_peak_runs(source, supplement):
     fio_a = env_a.get('fio', {}) if isinstance(env_a, dict) else {}
     fio_b = env_b.get('fio', {}) if isinstance(env_b, dict) else {}
     if (not all(isinstance(value, dict) for value in (a, b, identity_a, identity_b, plan_a, plan_b, env_a, env_b, tool_a, tool_b))
+            or not isinstance(source_sha256, str) or len(source_sha256) != 64
+            or any(char not in '0123456789abcdef' for char in source_sha256)
+            or plan_b.get('source_peak_sha256') != source_sha256
+            or not isinstance(source.get('run_id'), str) or not source['run_id']
+            or plan_b.get('source_peak_run_id') != source['run_id']
             or not isinstance(fio_a, dict) or not isinstance(fio_b, dict)
             or not isinstance(fio_a.get('version'), str) or not fio_a['version']
             or fio_a['version'] != fio_b.get('version')

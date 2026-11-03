@@ -280,22 +280,28 @@ class PeakSupplementFlowTests(unittest.TestCase):
                 cases.append(case)
                 jobs.append({'name':case['name'],'rw':'read','bs':MIB,'qd':depth,'runtime':5,'io_bytes':1000000})
         supplement={**common,'tool':{'method_version':'drivespeed-peak-supplement-v1'},
-                    'plan':{'file_bytes':8*GIB,'peak_criteria':criteria,'jobs':jobs},'cases':cases,
+                    'plan':{'file_bytes':8*GIB,'peak_criteria':criteria,'jobs':jobs,
+                            'source_peak_sha256':'c'*64,'source_peak_run_id':'old'},'cases':cases,
                     'peak_supplement':{'seq_read':{'status':'plateau','depths':[16,32]}}}
-        compared=compare_peak_runs(source,supplement)
+        compare = lambda a, b: compare_peak_runs(a, b, 'c'*64)
+        compared=compare(source,supplement)
         self.assertTrue(compared['workloads']['seq_read']['earlier_higher'])
+        changed=copy.deepcopy(supplement);changed['plan']['source_peak_sha256']='d'*64
+        self.assertEqual(compare(source,changed)['status'],'incompatible')
+        changed=copy.deepcopy(supplement);changed['plan']['source_peak_run_id']='other'
+        self.assertEqual(compare(source,changed)['status'],'incompatible')
         changed=copy.deepcopy(supplement);changed['device_identity']['fingerprint']='b'*64
-        self.assertEqual(compare_peak_runs(source,changed)['status'],'incompatible')
+        self.assertEqual(compare(source,changed)['status'],'incompatible')
         changed=copy.deepcopy(supplement);changed['environment']['fio']['version']='other'
-        self.assertEqual(compare_peak_runs(source,changed)['status'],'incompatible')
+        self.assertEqual(compare(source,changed)['status'],'incompatible')
         changed=copy.deepcopy(supplement);changed['cases'][1]['metrics']['read']['mb_s']=150
-        self.assertEqual(compare_peak_runs(source,changed)['workloads'],{})
+        self.assertEqual(compare(source,changed)['workloads'],{})
         changed=copy.deepcopy(supplement);changed['cases'][0]['metrics']['read'].pop('latency_us')
-        self.assertEqual(compare_peak_runs(source,changed)['workloads'],{})
+        self.assertEqual(compare(source,changed)['workloads'],{})
         changed=copy.deepcopy(supplement);changed['cases'][0]['bs']=4096
-        self.assertEqual(compare_peak_runs(source,changed)['workloads'],{})
+        self.assertEqual(compare(source,changed)['workloads'],{})
         changed=copy.deepcopy(source);changed['cases'][0]['metrics']['read'].pop('latency_us')
-        self.assertEqual(compare_peak_runs(changed,supplement)['workloads'],{})
+        self.assertEqual(compare(changed,supplement)['workloads'],{})
 
 
 if __name__ == '__main__':
